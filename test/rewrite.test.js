@@ -52,3 +52,36 @@ describe('rewrite — single link', () => {
     expect(rewrite('https://', ALL_ON).changed).toBe(false);
   });
 });
+
+describe('rewrite — every platform', () => {
+  it.each([
+    ['https://x.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
+    ['https://twitter.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
+    ['https://www.instagram.com/reel/Cabc123/', 'https://kkinstagram.com/reel/Cabc123/'],
+    ['https://www.tiktok.com/@someone/video/7123456789', 'https://vxtiktok.com/@someone/video/7123456789'],
+    ['https://vm.tiktok.com/ZMabc123/', 'https://vxtiktok.com/ZMabc123/'],
+    ['https://www.reddit.com/r/videos/comments/abc123/title/', 'https://rxddit.com/r/videos/comments/abc123/title/'],
+    ['https://bsky.app/profile/someone.bsky.social/post/3kabc', 'https://fxbsky.app/profile/someone.bsky.social/post/3kabc'],
+  ])('rewrites %s', (input, expected) => {
+    expect(rewrite(input, ALL_ON).content).toBe(expected);
+  });
+
+  it('rewrites several links in one message', () => {
+    const input = 'https://x.com/a/status/1 and https://vm.tiktok.com/ZMabc123/ both';
+    expect(rewrite(input, ALL_ON).content)
+      .toBe('https://fxtwitter.com/a/status/1 and https://vxtiktok.com/ZMabc123/ both');
+  });
+
+  it('rewrites only the enabled platforms in a mixed message', () => {
+    const mixed = { ...ALL_ON, tiktok: { enabled: false, domain: 'vxtiktok.com' } };
+    const input = 'https://x.com/a/status/1 and https://vm.tiktok.com/ZMabc123/';
+    expect(rewrite(input, mixed).content)
+      .toBe('https://fxtwitter.com/a/status/1 and https://vm.tiktok.com/ZMabc123/');
+  });
+
+  it('honours a non-default target domain from config', () => {
+    const custom = { ...ALL_ON, twitter: { enabled: true, domain: 'fixupx.com' } };
+    expect(rewrite('https://x.com/jack/status/20', custom).content)
+      .toBe('https://fixupx.com/jack/status/20');
+  });
+});
