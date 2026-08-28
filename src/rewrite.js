@@ -1,12 +1,18 @@
 import { matchRule, normaliseHost } from './rules.js';
 
 // Excludes < and > so an author-suppressed <https://...> link is detectable
-// by looking at the characters either side of the match.
-const URL_PATTERN = /https?:\/\/[^\s<>]+/g;
+// by looking at the characters either side of the match. Also excludes backtick
+// and pipe to prevent greedy consumption of adjacent inline-code or spoiler spans.
+// With these delimiters unmatchable, no match can begin outside a masked region
+// and end inside one, making the start-only check in isMasked provably sufficient.
+const URL_PATTERN = /https?:\/\/[^\s<>|`]+/g;
 
 // Regions whose contents Discord renders literally, or that the author has
 // explicitly opted out of embedding. Fenced blocks are matched first so a
-// stray backtick inside one cannot open an inline-code region.
+// stray backtick inside one cannot open an inline-code region. These patterns
+// are heuristic over unbalanced-delimiter input (e.g. a stray backtick can
+// over-match across code fences), but fail safely by over-masking (skipping
+// rewrites rather than corrupting content).
 const MASK_PATTERNS = [
   /```[\s\S]*?```/g,   // fenced code block
   /`[^`\n]*`/g,        // inline code

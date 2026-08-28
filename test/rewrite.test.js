@@ -114,4 +114,16 @@ describe('rewrite — skip conditions', () => {
     const off = { ...ALL_ON, instagram: { enabled: false, domain: 'kkinstagram.com' } };
     expect(rewrite('https://kkinstagram.com/reel/Cabc123/', off).changed).toBe(false);
   });
+
+  it('rewrites a URL immediately followed by inline code with no whitespace', () => {
+    const input = 'see https://x.com/jack/status/20`code` end';
+    expect(rewrite(input, ALL_ON).content)
+      .toBe('see https://fxtwitter.com/jack/status/20`code` end');
+  });
+
+  it('rewrites a URL immediately followed by a spoiler with no whitespace', () => {
+    const input = 'https://x.com/a/status/1||spoiler||';
+    expect(rewrite(input, ALL_ON).content)
+      .toBe('https://fxtwitter.com/a/status/1||spoiler||');
+  });
 });
