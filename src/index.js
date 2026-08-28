@@ -53,9 +53,10 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
+  process.on(signal, async () => {
     logger.info(`${signal} received, shutting down.`);
-    client.destroy();
+    // destroy() is async; exiting before it settles truncates the disconnect.
+    await client.destroy();
     process.exit(0);
   });
 }
@@ -64,4 +65,11 @@ process.on('unhandledRejection', (error) => {
   logger.error(`unhandled rejection: ${error?.stack ?? error}`);
 });
 
-client.login(config.token);
+// An unhandled login rejection would otherwise exit 0, which under
+// `restart: unless-stopped` is a silent crash-loop reporting success. The two
+// failures that land here are TokenInvalid and DisallowedIntents (Message
+// Content not enabled in the Developer Portal), both of which need a human.
+client.login(config.token).catch((error) => {
+  logger.error(`login failed: ${error.message}`);
+  process.exit(1);
+});
