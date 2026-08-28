@@ -7,6 +7,25 @@ import { matchRule, normaliseHost } from './rules.js';
 // and end inside one, making the start-only check in isMasked provably sufficient.
 const URL_PATTERN = /https?:\/\/[^\s<>|`]+/g;
 
+const TRACKING_PARAMS = new Set(['s', 't', 'si', 'igsh', 'igshid', 'fbclid', 'ref_src', 'ref_url']);
+// Punctuation that ends a sentence rather than a URL.
+const TRAILING_PUNCTUATION = /[.,;:!?'"\]}]+$/;
+
+function trimTrailing(raw) {
+  let url = raw.replace(TRAILING_PUNCTUATION, '');
+  // Only treat a closing paren as punctuation when the URL has no opening one.
+  while (url.endsWith(')') && !url.includes('(')) {
+    url = url.slice(0, -1).replace(TRAILING_PUNCTUATION, '');
+  }
+  return url;
+}
+
+function stripTracking(url) {
+  for (const key of [...url.searchParams.keys()]) {
+    if (TRACKING_PARAMS.has(key) || key.startsWith('utm_')) url.searchParams.delete(key);
+  }
+}
+
 // Regions whose contents Discord renders literally, or that the author has
 // explicitly opted out of embedding. Fenced blocks are matched first so a
 // stray backtick inside one cannot open an inline-code region. These patterns
@@ -44,9 +63,11 @@ export function rewrite(content, platforms) {
     // An author-suppressed <https://...> link: leave the embed suppressed.
     if (content[start - 1] === '<' && content[start + raw.length] === '>') continue;
 
-    const replaced = rewriteUrl(raw, platforms);
+    const trimmed = trimTrailing(raw);
+    if (trimmed.length === 0) continue;
+    const replaced = rewriteUrl(trimmed, platforms);
     if (replaced === null) continue;
-    replacements.push({ start, end: start + raw.length, text: replaced });
+    replacements.push({ start, end: start + trimmed.length, text: replaced });
   }
 
   if (replacements.length === 0) return { changed: false, content };
@@ -79,5 +100,6 @@ function rewriteUrl(raw, platforms) {
   url.protocol = 'https:';
   url.hostname = target;
   url.port = '';
+  stripTracking(url);
   return url.toString();
 }

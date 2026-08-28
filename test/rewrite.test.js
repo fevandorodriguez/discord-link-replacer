@@ -127,3 +127,35 @@ describe('rewrite — skip conditions', () => {
       .toBe('https://fxtwitter.com/a/status/1||spoiler||');
   });
 });
+
+describe('rewrite — parameters and punctuation', () => {
+  it('strips X share tracking parameters', () => {
+    expect(rewrite('https://x.com/jack/status/20?s=20&t=AbCd', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20');
+  });
+
+  it('strips instagram and utm tracking parameters', () => {
+    expect(rewrite('https://www.instagram.com/reel/Cabc123/?igsh=xyz&utm_source=ig', ALL_ON).content)
+      .toBe('https://kkinstagram.com/reel/Cabc123/');
+  });
+
+  it('keeps parameters that are not tracking', () => {
+    expect(rewrite('https://x.com/jack/status/20?lang=en', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20?lang=en');
+  });
+
+  it('preserves the fragment', () => {
+    expect(rewrite('https://x.com/jack/status/20#m', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20#m');
+  });
+
+  it('leaves trailing sentence punctuation outside the link', () => {
+    expect(rewrite('see https://x.com/jack/status/20.', ALL_ON).content)
+      .toBe('see https://fxtwitter.com/jack/status/20.');
+  });
+
+  it('leaves a trailing bracket outside the link', () => {
+    expect(rewrite('(https://x.com/jack/status/20)', ALL_ON).content)
+      .toBe('(https://fxtwitter.com/jack/status/20)');
+  });
+});
