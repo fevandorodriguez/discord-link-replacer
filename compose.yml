@@ -4,3 +4,7 @@ services:
     container_name: link-replacer
     restart: unless-stopped
     env_file: .env
+    # config.json is also COPYed into the image, but bind-mounting it means an
+    # edit takes effect on `docker compose restart` rather than a rebuild.
+    volumes:
+      - ./config.json:/app/config.json:ro

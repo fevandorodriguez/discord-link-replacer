@@ -56,9 +56,19 @@ LINKFIX_INSTAGRAM_DOMAIN=ddinstagram.com
 LINKFIX_TIKTOK_ENABLED=false
 ```
 
+`enabled` must be a real JSON boolean (`true` / `false`, not `"true"`),
+and the env override accepts only `true` or `false` (any case). Anything
+else is a startup error rather than a silent guess.
+
 These mirror domains are volunteer-run, third-party infrastructure — they
 go down or change hands periodically. When one does, swap it with an
 env override (or edit `config.json`) and restart; no code change needed.
+
+Under Docker Compose, `config.json` is bind-mounted read-only from the
+project directory, so editing it and running `docker compose restart`
+picks the change up — no rebuild. (The file is also baked into the image
+by the `Dockerfile`, so a container run without that mount uses the
+copy from build time.)
 
 ## Running
 
@@ -76,8 +86,13 @@ docker compose up -d
 ```
 
 Both read `DISCORD_TOKEN` from `.env` (see `.env.example`). A missing
-token makes the process print a readable error and exit 1 rather than
-starting up broken.
+token — or an invalid one, or Message Content left disabled in the
+Developer Portal — makes the process print a readable error and exit 1
+rather than starting up broken or crash-looping silently.
+
+Compose mounts `./config.json` into the container read-only, so a
+configuration change needs only `docker compose restart`; a code change
+needs `docker compose up -d --build`.
 
 ## Behaviour and limits
 
