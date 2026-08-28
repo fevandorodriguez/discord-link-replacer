@@ -16,6 +16,11 @@ export function createWebhookCache(botUserId) {
     get(channel) {
       // A thread has no webhooks of its own; it posts through its parent's.
       const target = channel.isThread() ? channel.parent : channel;
+      if (!target) {
+        return Promise.reject(
+          new Error(`thread ${channel.id} has no resolvable parent channel`)
+        );
+      }
       if (!cache.has(target.id)) {
         const pending = resolve(target).catch((error) => {
           cache.delete(target.id); // don't cache a failure

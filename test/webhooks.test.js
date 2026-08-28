@@ -54,4 +54,12 @@ describe('createWebhookCache', () => {
     expect(parent.createWebhook).toHaveBeenCalledOnce();
     expect(thread.createWebhook).not.toHaveBeenCalled();
   });
+
+  it('rejects (not throws sync) when a thread has no resolvable parent', async () => {
+    const thread = fakeChannel({ id: 'thread-no-parent', isThread: true, parent: null });
+    const cache = createWebhookCache(BOT_ID);
+    await expect(cache.get(thread)).rejects.toThrow(
+      'thread thread-no-parent has no resolvable parent channel'
+    );
+  });
 });
