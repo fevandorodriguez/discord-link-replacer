@@ -76,6 +76,33 @@ describe('ignoreReason', () => {
     expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
   });
 
+  it('ignores a message whose author is denied Embed Links in the channel', () => {
+    // Webhook messages bypass the posting member's permissions, so reposting
+    // here would embed a link the server has explicitly denied this user.
+    const member = { id: 'member-1' };
+    const channel = {
+      id: 'chan-1',
+      permissionsFor: (who) => ({
+        has: (flag) => (who === member ? flag !== PermissionFlagsBits.EmbedLinks : true),
+      }),
+    };
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBe('author-cannot-embed');
+  });
+
+  it('allows a message whose author has Embed Links', () => {
+    const member = { id: 'member-1' };
+    const channel = { id: 'chan-1', permissionsFor: () => ({ has: () => true }) };
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBeNull();
+  });
+
+  it('falls back to the author when there is no member, and fails closed if unresolvable', () => {
+    const channel = {
+      id: 'chan-1',
+      permissionsFor: (who) => (who === BOT_ID ? { has: () => true } : null),
+    };
+    expect(ignoreReason(fakeMessage({ channel, member: null }), BOT_ID)).toBe('author-cannot-embed');
+  });
+
   it('ignores a channel missing just one of the required permissions', () => {
     // Two of three required flags true, one false: only distinguishes
     // REQUIRED_PERMISSIONS.every(...) from .some(...) if every() is used —
@@ -184,6 +211,21 @@ describe('handleMessage', () => {
       expect.objectContaining({ content: 'https://fxtwitter.com/jack/status/20' }),
     );
     expect(order).toEqual(['send', 'delete']);
+  });
+
+  it('does not send or delete when the author cannot embed links', async () => {
+    const member = { id: 'member-1', displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' };
+    const channel = {
+      id: 'chan-1',
+      permissionsFor: (who) => ({
+        has: (flag) => (who === member ? flag !== PermissionFlagsBits.EmbedLinks : true),
+      }),
+    };
+    const message = fakeMessage({ channel, member, delete: vi.fn() });
+    const d = deps();
+    expect(await handleMessage(message, d)).toBe('author-cannot-embed');
+    expect(d.webhooks.get).not.toHaveBeenCalled();
+    expect(message.delete).not.toHaveBeenCalled();
   });
 
   it('does nothing when no link changes', async () => {

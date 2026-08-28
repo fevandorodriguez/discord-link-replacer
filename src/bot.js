@@ -25,6 +25,16 @@ export function ignoreReason(message, botUserId) {
   if (!permissions || !REQUIRED_PERMISSIONS.every((flag) => permissions.has(flag))) {
     return 'missing-permissions';
   }
+
+  // A webhook message is not subject to the posting member's permissions, so
+  // in a channel where the author is denied Embed Links — a common anti-scam
+  // setting, and the exact permission this bot exists to exercise — reposting
+  // would do for them something the server has explicitly denied them. Fail
+  // closed: the server's moderation intent wins over the embed.
+  const authorPermissions = message.channel.permissionsFor(message.member ?? message.author);
+  if (!authorPermissions || !authorPermissions.has(PermissionFlagsBits.EmbedLinks)) {
+    return 'author-cannot-embed';
+  }
   return null;
 }
 

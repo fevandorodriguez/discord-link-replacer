@@ -85,6 +85,11 @@ starting up broken.
   reference are left alone** — a webhook repost can't faithfully
   reproduce them, and deleting the original would destroy content that
   can't be recreated.
+- **If the author is denied Embed Links in that channel, the message is
+  left alone.** Webhook messages aren't subject to the posting member's
+  permissions, so reposting would embed a link the server has explicitly
+  denied that user — a common anti-scam setting. The bot fails closed
+  rather than working around the server's own moderation.
 - A webhook can't carry a reply reference, so **when the original message
   was a reply, that relationship is reduced to a text line**
   (`-# ↪ replying to <@user>`) prepended to the repost — the reposted
