@@ -7,7 +7,8 @@ working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
 and avatar, then deletes the original, so the channel ends up with exactly
-one message, attributed to the person who wrote it, with a working embed.
+one message, carrying the original author's name and avatar, with a
+working embed.
 
 ## Setup
 
@@ -30,7 +31,8 @@ The bot needs these permissions when you invite it to a server:
 - **Manage Messages** — to delete the original message after reposting it.
 - **Manage Webhooks** — to create and reuse the per-channel webhook it
   posts through.
-- **Send Messages**
+- **Send Messages** — to post the replacement, and for the plain-reply
+  fallback used when a channel has run out of webhook slots.
 
 If the bot is missing these in a given channel, it skips that channel
 and logs a warning once (not once per message).
@@ -112,6 +114,9 @@ needs `docker compose up -d --build`.
 - The reposted message belongs to the webhook, not the original author:
   it is not editable by them, and it is a new message ID, so existing
   pins or reply chains pointing at the original break when it is deleted.
+  **Discord also renders an "APP" badge beside the name on webhook
+  messages**, so the repost is not indistinguishable from a message the
+  author sent themselves.
 - **Deletions of the original message appear in the server audit log as
   performed by the bot**, not the original author. This is expected
   behaviour, but moderators should know about it before the bot is
