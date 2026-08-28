@@ -1,0 +1,6 @@
+services:
+  link-replacer:
+    build: .
+    container_name: link-replacer
+    restart: unless-stopped
+    env_file: .env
