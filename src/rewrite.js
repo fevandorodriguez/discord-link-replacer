@@ -1,11 +1,20 @@
 import { matchRule, normaliseHost } from './rules.js';
 
-// Excludes < and > so an author-suppressed <https://...> link is detectable
-// by looking at the characters either side of the match. Also excludes backtick
-// and pipe to prevent greedy consumption of adjacent inline-code or spoiler spans.
-// With these delimiters unmatchable, no match can begin outside a masked region
-// and end inside one, making the start-only check in isMasked provably sufficient.
-const URL_PATTERN = /https?:\/\/[^\s<>|`]+/g;
+// Restricted to the RFC 3986 URI character set (unreserved + reserved + "%").
+// That set is exactly what survives `new URL(x).toString()` unchanged, so a
+// match is guaranteed to round-trip: nothing the author typed can be silently
+// percent-encoded or substituted. A broader pattern swallows adjacent text —
+// emoji, CJK, smart quotes, `{`, `}`, `"`, `\` — into the URL, re-serialises it,
+// and (because handleMessage then deletes the original) destroys it. Truncating
+// at the first out-of-set character is strictly safer: the tail stays verbatim
+// via the span arithmetic below and the truncated prefix still rewrites.
+//
+// It also keeps the properties the earlier delimiter-specific pattern had:
+// < and > are excluded, so an author-suppressed <https://...> link is
+// detectable from the characters either side of the match; backtick and pipe
+// are excluded, so no match can begin outside a masked region and end inside
+// one, which is what makes the start-only check in isMasked sufficient.
+const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/gi;
 
 const TRACKING_PARAMS = new Set(['s', 't', 'si', 'igsh', 'igshid', 'fbclid', 'ref_src', 'ref_url']);
 // Punctuation that ends a sentence rather than a URL.

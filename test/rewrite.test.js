@@ -149,13 +149,45 @@ describe('rewrite — parameters and punctuation', () => {
       .toBe('https://fxtwitter.com/jack/status/20#m');
   });
 
+  // These two assert the same intent as before — punctuation written against a
+  // link stays outside it, verbatim — but with characters URL.toString()
+  // actually re-encodes. Asserting it with "." or ")" proves nothing: those
+  // round-trip unchanged, so the assertion holds even when the punctuation is
+  // swallowed into the URL. (Nor do '"' or '}': TRAILING_PUNCTUATION strips
+  // both, so they too pass regardless of what URL_PATTERN matched.)
   it('leaves trailing sentence punctuation outside the link', () => {
-    expect(rewrite('see https://x.com/jack/status/20.', ALL_ON).content)
-      .toBe('see https://fxtwitter.com/jack/status/20.');
+    expect(rewrite('see https://x.com/jack/status/20…', ALL_ON).content)
+      .toBe('see https://fxtwitter.com/jack/status/20…');
   });
 
   it('leaves a trailing bracket outside the link', () => {
-    expect(rewrite('(https://x.com/jack/status/20)', ALL_ON).content)
-      .toBe('(https://fxtwitter.com/jack/status/20)');
+    expect(rewrite('（https://x.com/jack/status/20）', ALL_ON).content)
+      .toBe('（https://fxtwitter.com/jack/status/20）');
+  });
+});
+
+// URL_PATTERN is restricted to the RFC 3986 character set because that set is
+// closed under `new URL(x).toString()`. Anything wider swallows adjacent text
+// into the URL, re-serialises it, and — since handleMessage then deletes the
+// original — destroys it irrecoverably.
+describe('rewrite — adjacent text is never re-encoded', () => {
+  it.each([
+    ['emoji', 'https://www.instagram.com/reel/Cabc123/🔥🔥', 'https://kkinstagram.com/reel/Cabc123/🔥🔥'],
+    ['CJK', 'https://x.com/jack/status/20これはひどい', 'https://fxtwitter.com/jack/status/20これはひどい'],
+    ['a smart apostrophe', 'https://x.com/jack/status/20’s wild', 'https://fxtwitter.com/jack/status/20’s wild'],
+    ['Cyrillic', 'https://x.com/jack/status/20ну и ну', 'https://fxtwitter.com/jack/status/20ну и ну'],
+    ['an em dash', 'https://x.com/jack/status/20—wow', 'https://fxtwitter.com/jack/status/20—wow'],
+    ['a brace', 'https://x.com/jack/status/20{note}', 'https://fxtwitter.com/jack/status/20{note}'],
+    ['a double quote', 'https://x.com/jack/status/20"quoted"', 'https://fxtwitter.com/jack/status/20"quoted"'],
+    ['a backslash', 'https://x.com/jack/status/20\\z', 'https://fxtwitter.com/jack/status/20\\z'],
+  ])('preserves %s immediately after a link', (_label, input, expected) => {
+    expect(rewrite(input, ALL_ON).content).toBe(expected);
+  });
+
+  it('leaves the trailing text byte-for-byte identical', () => {
+    const tail = '🔥これはひどい’—{}"\\';
+    const { content } = rewrite(`https://x.com/jack/status/20${tail}`, ALL_ON);
+    expect(content.slice(-tail.length)).toBe(tail);
+    expect(content).toBe(`https://fxtwitter.com/jack/status/20${tail}`);
   });
 });
