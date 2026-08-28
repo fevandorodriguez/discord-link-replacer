@@ -85,3 +85,33 @@ describe('rewrite — every platform', () => {
       .toBe('https://fixupx.com/jack/status/20');
   });
 });
+
+describe('rewrite — skip conditions', () => {
+  it('skips a link inside a fenced code block', () => {
+    const input = '```\nhttps://x.com/jack/status/20\n```';
+    expect(rewrite(input, ALL_ON).changed).toBe(false);
+  });
+
+  it('skips a link inside inline backticks', () => {
+    expect(rewrite('use `https://x.com/jack/status/20` here', ALL_ON).changed).toBe(false);
+  });
+
+  it('skips a link inside a spoiler', () => {
+    expect(rewrite('||https://x.com/jack/status/20||', ALL_ON).changed).toBe(false);
+  });
+
+  it('skips an author-suppressed link in angle brackets', () => {
+    expect(rewrite('<https://x.com/jack/status/20>', ALL_ON).changed).toBe(false);
+  });
+
+  it('still rewrites a link outside the masked region', () => {
+    const input = '`https://x.com/a/status/1` but https://x.com/b/status/2';
+    expect(rewrite(input, ALL_ON).content)
+      .toBe('`https://x.com/a/status/1` but https://fxtwitter.com/b/status/2');
+  });
+
+  it('skips a link on a disabled platform target domain', () => {
+    const off = { ...ALL_ON, instagram: { enabled: false, domain: 'kkinstagram.com' } };
+    expect(rewrite('https://kkinstagram.com/reel/Cabc123/', off).changed).toBe(false);
+  });
+});

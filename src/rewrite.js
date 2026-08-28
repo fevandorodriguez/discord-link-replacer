@@ -4,12 +4,40 @@ import { matchRule, normaliseHost } from './rules.js';
 // by looking at the characters either side of the match.
 const URL_PATTERN = /https?:\/\/[^\s<>]+/g;
 
+// Regions whose contents Discord renders literally, or that the author has
+// explicitly opted out of embedding. Fenced blocks are matched first so a
+// stray backtick inside one cannot open an inline-code region.
+const MASK_PATTERNS = [
+  /```[\s\S]*?```/g,   // fenced code block
+  /`[^`\n]*`/g,        // inline code
+  /\|\|[\s\S]*?\|\|/g, // spoiler
+];
+
+function maskedRanges(content) {
+  const ranges = [];
+  for (const pattern of MASK_PATTERNS) {
+    for (const m of content.matchAll(pattern)) {
+      ranges.push([m.index, m.index + m[0].length]);
+    }
+  }
+  return ranges;
+}
+
+function isMasked(ranges, start) {
+  return ranges.some(([from, to]) => start >= from && start < to);
+}
+
 export function rewrite(content, platforms) {
+  const ranges = maskedRanges(content);
   const replacements = [];
 
   for (const match of content.matchAll(URL_PATTERN)) {
     const start = match.index;
     const raw = match[0];
+    if (isMasked(ranges, start)) continue;
+    // An author-suppressed <https://...> link: leave the embed suppressed.
+    if (content[start - 1] === '<' && content[start + raw.length] === '>') continue;
+
     const replaced = rewriteUrl(raw, platforms);
     if (replaced === null) continue;
     replacements.push({ start, end: start + raw.length, text: replaced });
@@ -18,7 +46,6 @@ export function rewrite(content, platforms) {
   if (replacements.length === 0) return { changed: false, content };
 
   let out = content;
-  // Splice from the end so earlier offsets stay valid.
   for (const r of replacements.reverse()) {
     out = out.slice(0, r.start) + r.text + out.slice(r.end);
   }
