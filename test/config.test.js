@@ -74,8 +74,69 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/myspace/);
   });
 
-  it('throws on a malformed domain', () => {
+  it('throws on a malformed domain, naming the config file', () => {
     write({ ...VALID, twitter: { enabled: true, domain: 'https://fxtwitter.com/' } });
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/domain/i);
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(file);
+  });
+
+  it('lets an env var enable a platform disabled in the file', () => {
+    write({ ...VALID, tiktok: { enabled: false, domain: 'vxtiktok.com' } });
+    const config = loadConfig({
+      file,
+      env: { DISCORD_TOKEN: 'abc', LINKFIX_TIKTOK_ENABLED: 'TRUE' },
+    });
+    expect(config.platforms.tiktok.enabled).toBe(true);
+  });
+});
+
+describe('loadConfig — enabled must be a real boolean', () => {
+  it.each([
+    ['the string "false"', 'false'],
+    ['the string "true"', 'true'],
+    ['a number', 0],
+    ['null', null],
+  ])('throws when enabled is %s rather than a boolean', (_label, value) => {
+    // "enabled": "false" is a truthy string: silently leaving the platform on
+    // is the exact opposite of what the operator asked for.
+    write({ ...VALID, tiktok: { enabled: value, domain: 'vxtiktok.com' } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }))
+      .toThrow(/enabled.*tiktok/i);
+  });
+
+  it.each(['yes', '1', 'on', 'off', ''])(
+    'throws on LINKFIX_TIKTOK_ENABLED=%j rather than guessing',
+    (value) => {
+      write(VALID);
+      expect(() => loadConfig({
+        file,
+        env: { DISCORD_TOKEN: 'abc', LINKFIX_TIKTOK_ENABLED: value },
+      })).toThrow(/LINKFIX_TIKTOK_ENABLED/);
+    },
+  );
+
+  it.each([
+    ['TRUE', true],
+    ['False', false],
+    [' true ', true],
+  ])('accepts %j case-insensitively', (value, expected) => {
+    write(VALID);
+    const config = loadConfig({
+      file,
+      env: { DISCORD_TOKEN: 'abc', LINKFIX_TIKTOK_ENABLED: value },
+    });
+    expect(config.platforms.tiktok.enabled).toBe(expected);
+  });
+});
+
+describe('loadConfig — the file must contain a JSON object', () => {
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a string', '"twitter"'],
+    ['a number', '7'],
+  ])('throws when the config is %s, naming the file', (_label, contents) => {
+    writeFileSync(file, contents);
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(file);
   });
 });
