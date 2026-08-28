@@ -32,6 +32,9 @@ export function buildPayload(message, content) {
   const isReply = message.reference?.type !== REFERENCE_TYPE_FORWARD && message.reference?.messageId;
   const repliedTo = message.mentions?.repliedUser?.id;
   // A webhook cannot carry a reply reference, so the link becomes a subtext line.
+  // If the replied-to user isn't resolvable (they left, or the message is
+  // uncached), the subtext line is silently dropped rather than abandoning
+  // the rewrite — this is intended graceful degradation, not a bug.
   const body = isReply && repliedTo ? `-# ↪ replying to <@${repliedTo}>\n${content}` : content;
 
   const payload = {
@@ -65,7 +68,12 @@ export async function handleMessage(message, { platforms, webhooks, logger }) {
     if (error.code === ERROR_MAX_WEBHOOKS) {
       // Channel is out of webhook slots: post the fixed link plainly and
       // leave the original in place rather than destroying it.
-      await message.reply({ content, allowedMentions: { parse: [] } });
+      try {
+        await message.reply({ content, allowedMentions: { parse: [] } });
+      } catch (replyError) {
+        logger.error(`fallback reply failed in ${message.channel.id}: ${replyError.message}`);
+        return 'send-failed';
+      }
       return 'fallback-reply';
     }
     logger.error(`webhook lookup failed in ${message.channel.id}: ${error.message}`);

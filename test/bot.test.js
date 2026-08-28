@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PermissionFlagsBits } from 'discord.js';
-import { ignoreReason } from '../src/bot.js';
+import { ignoreReason, buildPayload, handleMessage } from '../src/bot.js';
 
 const BOT_ID = 'bot-1';
 
@@ -90,8 +90,6 @@ describe('ignoreReason', () => {
   });
 });
 
-import { buildPayload, handleMessage } from '../src/bot.js';
-
 function fakeMember() {
   return { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/avatar.png' };
 }
@@ -116,6 +114,18 @@ describe('buildPayload', () => {
     });
     const payload = buildPayload(message, 'https://fxtwitter.com/jack/status/20');
     expect(payload.content).toBe('-# ↪ replying to <@user-9>\nhttps://fxtwitter.com/jack/status/20');
+  });
+
+  it('drops the subtext line but still rewrites when repliedUser is unresolved', () => {
+    // The replied-to user left, or the message is uncached: repliedUser is
+    // absent even though this is a reply. buildPayload silently omits the
+    // subtext line rather than abandoning the rewrite.
+    const message = fakeMessage({
+      member: fakeMember(),
+      reference: { type: 0, messageId: 'msg-0' },
+    });
+    const payload = buildPayload(message, 'https://fxtwitter.com/jack/status/20');
+    expect(payload.content).toBe('https://fxtwitter.com/jack/status/20');
   });
 
   it('passes the thread ID when the message is in a thread', () => {
@@ -208,6 +218,16 @@ describe('handleMessage', () => {
     expect(reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: 'https://fxtwitter.com/jack/status/20' }),
     );
+    expect(message.delete).not.toHaveBeenCalled();
+  });
+
+  it('resolves to send-failed, rather than rejecting, when the fallback reply itself fails', async () => {
+    const error = Object.assign(new Error('max webhooks'), { code: 30007 });
+    const reply = vi.fn(async () => { throw new Error('reply blocked'); });
+    const message = fakeMessage({ member: fakeMember(), reply, delete: vi.fn() });
+    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }) } });
+
+    await expect(handleMessage(message, d)).resolves.toBe('send-failed');
     expect(message.delete).not.toHaveBeenCalled();
   });
 
