@@ -160,7 +160,10 @@ const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 function deps(overrides = {}) {
   return {
     platforms: PLATFORMS_ON,
-    webhooks: { get: vi.fn(async () => ({ send: vi.fn(async () => ({ id: 'new-1' })) })) },
+    webhooks: {
+      get: vi.fn(async () => ({ send: vi.fn(async () => ({ id: 'new-1' })) })),
+      invalidate: vi.fn(),
+    },
     logger: silentLogger,
     ...overrides,
   };
@@ -174,7 +177,7 @@ describe('handleMessage', () => {
       member: fakeMember(),
       delete: vi.fn(async () => { order.push('delete'); }),
     });
-    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })) } });
+    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })), invalidate: vi.fn() } });
 
     expect(await handleMessage(message, d)).toBe('replaced');
     expect(send).toHaveBeenCalledWith(
@@ -202,7 +205,7 @@ describe('handleMessage', () => {
   it('never deletes the original when the send fails', async () => {
     const send = vi.fn(async () => { throw new Error('boom'); });
     const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })) } });
+    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })), invalidate: vi.fn() } });
 
     expect(await handleMessage(message, d)).toBe('send-failed');
     expect(message.delete).not.toHaveBeenCalled();
@@ -212,7 +215,7 @@ describe('handleMessage', () => {
     const error = Object.assign(new Error('max webhooks'), { code: 30007 });
     const reply = vi.fn(async () => {});
     const message = fakeMessage({ member: fakeMember(), reply, delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }) } });
+    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }), invalidate: vi.fn() } });
 
     expect(await handleMessage(message, d)).toBe('fallback-reply');
     expect(reply).toHaveBeenCalledWith(
@@ -225,9 +228,57 @@ describe('handleMessage', () => {
     const error = Object.assign(new Error('max webhooks'), { code: 30007 });
     const reply = vi.fn(async () => { throw new Error('reply blocked'); });
     const message = fakeMessage({ member: fakeMember(), reply, delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }) } });
+    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }), invalidate: vi.fn() } });
 
     await expect(handleMessage(message, d)).resolves.toBe('send-failed');
+    expect(message.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Unknown Webhook (10015)', 10015],
+    ['Invalid Webhook Token (50027)', 50027],
+  ])('invalidates and retries once on %s, then sends and deletes', async (_label, code) => {
+    // A moderator deleted the webhook from channel settings. The cached
+    // promise still resolves to the dead object, so without invalidation the
+    // channel is broken for every subsequent message until a restart.
+    const dead = { send: vi.fn(async () => { throw Object.assign(new Error('gone'), { code }); }) };
+    const order = [];
+    const fresh = { send: vi.fn(async () => { order.push('send'); }) };
+    const get = vi.fn(async () => (get.mock.calls.length === 1 ? dead : fresh));
+    const invalidate = vi.fn();
+    const message = fakeMessage({
+      member: fakeMember(),
+      delete: vi.fn(async () => { order.push('delete'); }),
+    });
+
+    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('replaced');
+    expect(invalidate).toHaveBeenCalledWith(message.channel);
+    expect(fresh.send).toHaveBeenCalledOnce();
+    expect(order).toEqual(['send', 'delete']);
+  });
+
+  it('never deletes the original when the retry after invalidation also fails', async () => {
+    const stale = () => Object.assign(new Error('gone'), { code: 10015 });
+    const send = vi.fn(async () => { throw stale(); });
+    const get = vi.fn(async () => ({ send }));
+    const invalidate = vi.fn();
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
+
+    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('send-failed');
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledTimes(2); // the original attempt and one retry
+    expect(message.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a send failure that is not a stale webhook', async () => {
+    const send = vi.fn(async () => { throw Object.assign(new Error('rate limited'), { code: 429 }); });
+    const get = vi.fn(async () => ({ send }));
+    const invalidate = vi.fn();
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
+
+    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('send-failed');
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
     expect(message.delete).not.toHaveBeenCalled();
   });
 

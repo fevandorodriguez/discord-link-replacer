@@ -12,10 +12,14 @@ export function createWebhookCache(botUserId) {
     return channel.createWebhook({ name: WEBHOOK_NAME });
   }
 
+  // A thread has no webhooks of its own; it posts through its parent's.
+  function targetOf(channel) {
+    return channel.isThread() ? channel.parent : channel;
+  }
+
   return {
     get(channel) {
-      // A thread has no webhooks of its own; it posts through its parent's.
-      const target = channel.isThread() ? channel.parent : channel;
+      const target = targetOf(channel);
       if (!target) {
         return Promise.reject(
           new Error(`thread ${channel.id} has no resolvable parent channel`)
@@ -29,6 +33,14 @@ export function createWebhookCache(botUserId) {
         cache.set(target.id, pending);
       }
       return cache.get(target.id);
+    },
+    // Drops a cached webhook a moderator deleted from channel settings. The
+    // cache is otherwise only invalidated when resolution fails, so a webhook
+    // that dies after being cached wedges the channel until the process
+    // restarts: the cached promise keeps resolving to the dead object.
+    invalidate(channel) {
+      const target = targetOf(channel);
+      if (target) cache.delete(target.id);
     },
     size: () => cache.size,
   };

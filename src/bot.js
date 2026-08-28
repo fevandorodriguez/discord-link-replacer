@@ -52,6 +52,15 @@ export function buildPayload(message, content) {
 // Discord API error: the channel already has the maximum 15 webhooks.
 const ERROR_MAX_WEBHOOKS = 30007;
 
+// Discord API errors meaning the cached webhook no longer exists — a moderator
+// deleted it from channel settings, or its token was regenerated. The cache
+// holds a resolved promise, so without invalidation the channel stays broken
+// for every subsequent message until the process restarts.
+const STALE_WEBHOOK_ERRORS = new Set([
+  10015, // Unknown Webhook
+  50027, // Invalid Webhook Token
+]);
+
 export async function handleMessage(message, { platforms, webhooks, logger }) {
   const reason = ignoreReason(message, message.client?.user?.id);
   if (reason) return reason;
@@ -83,10 +92,24 @@ export async function handleMessage(message, { platforms, webhooks, logger }) {
   try {
     await webhook.send(payload);
   } catch (error) {
-    logger.error(`webhook send failed in ${message.channel.id}: ${error.message}`);
-    return 'send-failed';
+    if (!STALE_WEBHOOK_ERRORS.has(error.code)) {
+      logger.error(`webhook send failed in ${message.channel.id}: ${error.message}`);
+      return 'send-failed';
+    }
+    // The cached webhook is gone. Drop it, rebuild, and try exactly once more.
+    webhooks.invalidate(message.channel);
+    try {
+      const fresh = await webhooks.get(message.channel);
+      await fresh.send(payload);
+    } catch (retryError) {
+      logger.error(`webhook send retry failed in ${message.channel.id}: ${retryError.message}`);
+      return 'send-failed';
+    }
   }
 
+  // Reachable only once a webhook.send() above has resolved: every failing
+  // path returns before here. This is the sole message.delete() call site,
+  // and it must stay that way — the delete is irreversible.
   try {
     await message.delete();
   } catch (error) {

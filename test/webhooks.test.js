@@ -55,6 +55,32 @@ describe('createWebhookCache', () => {
     expect(thread.createWebhook).not.toHaveBeenCalled();
   });
 
+  it('re-resolves after invalidate, so a deleted webhook is not cached forever', async () => {
+    const channel = fakeChannel();
+    const cache = createWebhookCache(BOT_ID);
+    await cache.get(channel);
+    cache.invalidate(channel);
+    expect(cache.size()).toBe(0);
+    await cache.get(channel);
+    expect(channel.fetchWebhooks).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates a thread against its parent channel', async () => {
+    const parent = fakeChannel({ id: 'parent-1' });
+    const thread = fakeChannel({ id: 'thread-1', isThread: true, parent });
+    const cache = createWebhookCache(BOT_ID);
+    await cache.get(thread);
+    expect(cache.size()).toBe(1);
+    cache.invalidate(thread);
+    expect(cache.size()).toBe(0);
+  });
+
+  it('ignores invalidate for a thread with no resolvable parent', () => {
+    const thread = fakeChannel({ id: 'thread-no-parent', isThread: true, parent: null });
+    const cache = createWebhookCache(BOT_ID);
+    expect(() => cache.invalidate(thread)).not.toThrow();
+  });
+
   it('rejects (not throws sync) when a thread has no resolvable parent', async () => {
     const thread = fakeChannel({ id: 'thread-no-parent', isThread: true, parent: null });
     const cache = createWebhookCache(BOT_ID);
