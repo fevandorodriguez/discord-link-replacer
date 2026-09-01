@@ -2,8 +2,13 @@ import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { loadConfig } from './config.js';
 import { createWebhookCache } from './webhooks.js';
 import { handleMessage } from './bot.js';
+import { createLogBuffer } from './logbuffer.js';
+import { createModeStore } from './admin/mode-store.js';
+import { createAdminServer } from './admin/server.js';
+import { randomBytes } from 'node:crypto';
 
-const logger = console;
+const logBuffer = createLogBuffer();
+const logger = logBuffer.attach(console);
 
 let config;
 try {
@@ -11,6 +16,27 @@ try {
 } catch (error) {
   logger.error(error.message);
   process.exit(1);
+}
+
+const modeStore = createModeStore({
+  mode: config.mode,
+  modeSource: config.modeSource,
+  file: process.env.LINKFIX_CONFIG_FILE ?? 'config.json',
+});
+
+// Unset SESSION_SECRET means sessions do not survive a restart. That is an
+// acceptable default for a one-user panel; it is documented, not silent.
+const sessionSecret = process.env.SESSION_SECRET ?? randomBytes(32).toString('hex');
+const admin = createAdminServer({
+  modeStore,
+  logBuffer,
+  passwordHash: process.env.ADMIN_PASSWORD_HASH,
+  sessionSecret,
+  logger,
+});
+if (admin) {
+  const port = Number(process.env.ADMIN_PORT ?? 3000);
+  admin.listen(port, () => logger.info(`Admin panel listening on ${port}`));
 }
 
 const client = new Client({
@@ -42,8 +68,12 @@ client.on(Events.MessageCreate, async (message) => {
   if (!webhooks) return; // not logged in yet
   try {
     const outcome = await handleMessage(message, {
-      mode: config.mode, platforms: config.platforms, webhooks, logger,
+      mode: modeStore.current(), platforms: config.platforms, webhooks, logger,
     });
+    if (outcome === 'replaced' || outcome === 'suppressed' || outcome === 'fallback-reply') {
+      // Channel name only — never the message or the link.
+      logBuffer.record('info', `${outcome} in #${message.channel.name ?? message.channel.id}`);
+    }
     if (outcome === 'missing-permissions' && !warnedChannels.has(message.channel.id)) {
       warnedChannels.add(message.channel.id);
       // Suppress mode never touches a webhook, so naming Manage Webhooks here
@@ -64,6 +94,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     logger.info(`${signal} received, shutting down.`);
     // destroy() is async; exiting before it settles truncates the disconnect.
     await client.destroy();
+    admin?.close();
     process.exit(0);
   });
 }

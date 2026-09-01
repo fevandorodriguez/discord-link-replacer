@@ -8,3 +8,14 @@ services:
     # edit takes effect on `docker compose restart` rather than a rebuild.
     volumes:
       - ./config.json:/app/config.json:ro
+    # No published port: the admin panel is reached only via Caddy, over the
+    # shared `monkey` network. `default` keeps the container able to reach
+    # anything else it already depended on.
+    networks:
+      - default
+      - monkey
+
+networks:
+  monkey:
+    external: true
+    name: monkey_default

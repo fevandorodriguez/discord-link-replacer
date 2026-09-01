@@ -192,6 +192,79 @@ If `docker compose up -d` ever reports the container as already up to
 date and you're not seeing the change, add `--force-recreate` to force
 it: `docker compose up -d --force-recreate`.
 
+## Admin panel
+
+A small password-gated page, served from inside the bot process at
+`discord.fev.space`, that shows recent delivery activity and lets you
+switch between `repost` and `suppress` without touching the server. It
+shows only a channel name and a level per event — never a message or a
+rewritten link.
+
+### Enabling it
+
+The panel does not start unless `ADMIN_PASSWORD_HASH` is set. Generate
+one with:
+
+```bash
+npm run hash-password -- "your password"
+```
+
+and put the result in `.env` as `ADMIN_PASSWORD_HASH`. **This is
+deliberate fail-closed behaviour**: an unset or malformed hash means no
+panel, logged as a warning, rather than a panel with a guessable or
+absent password. The bot itself is unaffected either way.
+
+`SESSION_SECRET` is optional. If it's unset, a random secret is
+generated at process start, which means every session (i.e. every signed-
+in browser) is invalidated on restart and you'll need to sign in again.
+Set `SESSION_SECRET` to a fixed value in `.env` if you'd rather sessions
+survive a restart.
+
+Because these are `.env` values, changing either of them needs
+`docker compose up -d` (not `restart`) to take effect — see the env vs.
+config.json vs. code distinction under Running above; it applies here
+too. `ADMIN_PASSWORD_HASH`, `SESSION_SECRET` and `ADMIN_PORT` are all
+`.env` values.
+
+### Caddy
+
+Point a subdomain at the container over the internal `monkey` network
+(see `compose.yml` — the container joins it but publishes no port to the
+host, so the panel is reachable only through Caddy):
+
+```
+discord.fev.space {
+	reverse_proxy link-replacer:3000
+}
+```
+
+**Adding this block requires reloading Caddy**, and this Caddy instance
+fronts around ten other, unrelated live apps on the same box — a reload
+affects all of them, not just this one. Treat it accordingly.
+
+### Limits
+
+- **The login rate limiter is global, not per visitor.** The container
+  sits behind Caddy, so every request's socket address is Caddy's own,
+  not the actual visitor's — the limiter cannot tell requests apart by
+  origin, so it counts failures for everyone in one shared bucket. Five
+  failed logins from *anyone* (including you, mistyping your own
+  password) locks the panel for fifteen minutes for *everyone*, and
+  because the limiter's state lives only in memory, the one way to clear
+  it early is to restart the container. This is a deliberate trade-off,
+  not an oversight: there is exactly one legitimate user, and an
+  attacker has no way to influence which bucket their attempts land in.
+- **Mode is locked when `LINKFIX_MODE` is set in the environment.** The
+  env var always wins over `config.json` (see Delivery modes above), so
+  when it's set the panel's toggle is disabled and shows which variable
+  to unset to hand control back to the panel. It never silently accepts
+  a change that `LINKFIX_MODE` would then override.
+- **History is memory-only and capped.** Recent activity resets on every
+  restart and only keeps the most recent entries; it is not a
+  persistent audit log.
+- **No attribution.** An entry names the channel and what happened, not
+  which member's message triggered it.
+
 ## Behaviour and limits
 
 - **In repost mode**, messages with **attachments, stickers, a poll, or a
