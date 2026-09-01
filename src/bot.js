@@ -1,5 +1,6 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { rewrite } from './rewrite.js';
+import { deliver as repostDeliver } from './delivery/repost.js';
 
 const REQUIRED_PERMISSIONS = [
   PermissionFlagsBits.ManageMessages,
@@ -38,39 +39,6 @@ export function ignoreReason(message, botUserId) {
   return null;
 }
 
-export function buildPayload(message, content) {
-  const isReply = message.reference?.type !== REFERENCE_TYPE_FORWARD && message.reference?.messageId;
-  const repliedTo = message.mentions?.repliedUser?.id;
-  // A webhook cannot carry a reply reference, so the link becomes a subtext line.
-  // If the replied-to user isn't resolvable (they left, or the message is
-  // uncached), the subtext line is silently dropped rather than abandoning
-  // the rewrite — this is intended graceful degradation, not a bug.
-  const body = isReply && repliedTo ? `-# ↪ replying to <@${repliedTo}>\n${content}` : content;
-
-  const payload = {
-    content: body,
-    username: message.member?.displayName ?? message.author.username,
-    avatarURL: message.member?.displayAvatarURL() ?? message.author.displayAvatarURL(),
-    // Mentions still render, but nobody the original already pinged gets a
-    // second notification.
-    allowedMentions: { parse: [] },
-  };
-  if (message.channel.isThread?.()) payload.threadId = message.channel.id;
-  return payload;
-}
-
-// Discord API error: the channel already has the maximum 15 webhooks.
-const ERROR_MAX_WEBHOOKS = 30007;
-
-// Discord API errors meaning the cached webhook no longer exists — a moderator
-// deleted it from channel settings, or its token was regenerated. The cache
-// holds a resolved promise, so without invalidation the channel stays broken
-// for every subsequent message until the process restarts.
-const STALE_WEBHOOK_ERRORS = new Set([
-  10015, // Unknown Webhook
-  50027, // Invalid Webhook Token
-]);
-
 export async function handleMessage(message, { platforms, webhooks, logger }) {
   const reason = ignoreReason(message, message.client?.user?.id);
   if (reason) return reason;
@@ -78,54 +46,5 @@ export async function handleMessage(message, { platforms, webhooks, logger }) {
   const { changed, content } = rewrite(message.content, platforms);
   if (!changed) return 'unchanged';
 
-  const payload = buildPayload(message, content);
-
-  let webhook;
-  try {
-    webhook = await webhooks.get(message.channel);
-  } catch (error) {
-    if (error.code === ERROR_MAX_WEBHOOKS) {
-      // Channel is out of webhook slots: post the fixed link plainly and
-      // leave the original in place rather than destroying it.
-      try {
-        await message.reply({ content, allowedMentions: { parse: [] } });
-      } catch (replyError) {
-        logger.error(`fallback reply failed in ${message.channel.id}: ${replyError.message}`);
-        return 'send-failed';
-      }
-      return 'fallback-reply';
-    }
-    logger.error(`webhook lookup failed in ${message.channel.id}: ${error.message}`);
-    return 'send-failed';
-  }
-
-  try {
-    await webhook.send(payload);
-  } catch (error) {
-    if (!STALE_WEBHOOK_ERRORS.has(error.code)) {
-      logger.error(`webhook send failed in ${message.channel.id}: ${error.message}`);
-      return 'send-failed';
-    }
-    // The cached webhook is gone. Drop it, rebuild, and try exactly once more.
-    webhooks.invalidate(message.channel);
-    try {
-      const fresh = await webhooks.get(message.channel);
-      await fresh.send(payload);
-    } catch (retryError) {
-      logger.error(`webhook send retry failed in ${message.channel.id}: ${retryError.message}`);
-      return 'send-failed';
-    }
-  }
-
-  // Reachable only once a webhook.send() above has resolved: every failing
-  // path returns before here. This is the sole message.delete() call site,
-  // and it must stay that way — the delete is irreversible.
-  try {
-    await message.delete();
-  } catch (error) {
-    // The replacement is already posted; a failed delete leaves a duplicate,
-    // which is noisy but not destructive.
-    logger.warn(`could not delete ${message.id}: ${error.message}`);
-  }
-  return 'replaced';
+  return repostDeliver(message, content, { webhooks, logger });
 }
