@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import net from 'node:net';
 import http from 'node:http';
 import { handleRequest, createAdminServer } from '../../src/admin/server.js';
 import { hashPassword, signSession, createRateLimiter } from '../../src/admin/auth.js';
@@ -30,9 +29,6 @@ function fakeReq({ method = 'GET', url = '/', cookie, body = '' } = {}) {
     headers: cookie ? { cookie } : {},
     socket: { remoteAddress: '1.2.3.4' },
     async *[Symbol.asyncIterator]() { yield Buffer.from(body); },
-    // Real http.IncomingMessage has this; every response path that returns
-    // without consuming the body must call it (fix round 1, Critical).
-    destroy: vi.fn(),
   };
   return req;
 }
@@ -199,85 +195,6 @@ describe('authenticated requests', () => {
   });
 });
 
-// Fix round 1, Critical: any response path that returns without reading the
-// request body left the request stream unconsumed and listener-less. If a
-// real client declares a Content-Length bigger than what it actually sends
-// and then resets the connection, that surfaces as an unhandled 'error' on
-// the raw socket -- a synchronous throw, not a promise rejection -- which
-// crashes the whole process (the Discord client included), not just the one
-// request. Every early-return branch must call req.destroy() to remove
-// itself as a source of that error. The fake req here cannot reproduce the
-// crash itself (see 'survives a client that lies about Content-Length and
-// resets the connection' below for that, over a real socket) but it can and
-// must prove the mechanism the fix relies on: destroy() is actually called
-// on every path that skips readBody(), and NOT called on paths that read it.
-describe('request stream hygiene', () => {
-  it('destroys the request when serving the login page unauthenticated', async () => {
-    const req = fakeReq();
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request when serving the dashboard authenticated', async () => {
-    const req = fakeReq({ cookie: validCookie() });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request on the unauthenticated 401 gate', async () => {
-    const req = fakeReq({ url: '/api/state' });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request on a signed-in GET /api/state', async () => {
-    const req = fakeReq({ url: '/api/state', cookie: validCookie() });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request on a locked-mode 409', async () => {
-    modeStore.locked = () => true;
-    modeStore.source = () => 'LINKFIX_MODE';
-    const req = fakeReq({ method: 'POST', url: '/api/mode', cookie: validCookie(), body: '{"mode":"suppress"}' });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request on logout', async () => {
-    const req = fakeReq({ method: 'POST', url: '/logout', cookie: validCookie() });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request on an unknown path', async () => {
-    const req = fakeReq({ url: '/secrets', cookie: validCookie() });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('destroys the request when the login rate limiter has already tripped', async () => {
-    for (let i = 0; i < 5; i++) {
-      await handleRequest(fakeReq({ method: 'POST', url: '/login', body: 'password=nope' }), fakeRes(), deps);
-    }
-    const req = fakeReq({ method: 'POST', url: '/login', body: `password=${encodeURIComponent(PASSWORD)}` });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).toHaveBeenCalled();
-  });
-
-  it('does not destroy the request on paths that read the body themselves', async () => {
-    const req = fakeReq({ method: 'POST', url: '/api/mode', cookie: validCookie(), body: '{"mode":"suppress"}' });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).not.toHaveBeenCalled();
-  });
-
-  it('does not destroy the request on a successful login (the body was already read)', async () => {
-    const req = fakeReq({ method: 'POST', url: '/login', body: `password=${encodeURIComponent(PASSWORD)}` });
-    await handleRequest(req, fakeRes(), deps);
-    expect(req.destroy).not.toHaveBeenCalled();
-  });
-});
-
 describe('createAdminServer', () => {
   it('returns null without a password hash, so the panel cannot start unprotected', () => {
     expect(createAdminServer({ ...deps, passwordHash: undefined })).toBeNull();
@@ -323,71 +240,41 @@ describe('createAdminServer', () => {
     }
   });
 
-  // Fix round 1, Critical (the most serious finding on this branch): a client
-  // that declares more Content-Length than it actually sends, then resets
-  // the connection, hits a socket with no consumer and no error listener on
-  // any early-return path -- an unhandled socket 'error' is a synchronous
-  // throw that takes down the whole process, Discord client included, not
-  // just this one request. This is the one property the fake single-chunk
-  // req/res harness used everywhere else in this file structurally cannot
-  // exercise: it never touches a real socket, so it cannot reproduce this
-  // failure mode. This test does, over a real net.Socket against a real
-  // http.Server from createAdminServer.
-  //
-  // A process-level crash can't be asserted as a normal thrown exception --
-  // by definition, nothing in this file's call stack is on the stack when it
-  // happens. Instead: install our own uncaughtException listener for the
-  // duration of the attack (this itself suppresses Node's fatal default
-  // behavior, which is what would otherwise take down the whole vitest
-  // worker), capture whether it fires, then assert it didn't -- and confirm
-  // the server is still alive and answering by sending it a normal request
-  // afterward.
-  it('survives a client that lies about Content-Length and resets the connection', async () => {
+  // Fix round 2: round 1 added `req.destroy()` after responding on every
+  // early-return path, on the theory that an unconsumed request body left a
+  // process-crashing hole (it didn't -- that Critical was retracted; see the
+  // round-2 fix report). That `req.destroy()` was a real regression in its
+  // own right: it tears down the shared socket immediately after `res.end()`
+  // queues the response, while a client with a genuinely large body (a
+  // health check, a scanner, anything sending more than a trivial payload)
+  // may still be mid-write. Destroying the socket at that moment can RST the
+  // connection before the OS has flushed the already-queued response, so the
+  // client never observes the status code at all -- an opaque connection
+  // failure instead of a diagnosable 401/409/429. This test pins the
+  // opposite property directly: a client uploading a multi-megabyte body to
+  // the unauthenticated /api/mode gate (401, no readBody() call) must still
+  // see its status code, over a real http.Server and a real request body
+  // large enough that fetch/undici is still writing it when the response
+  // comes back. (A smaller, artificially-paced body was tried first and
+  // didn't discriminate -- undici had already finished writing each chunk
+  // and gone idle between chunks by the time either the fix or the bug would
+  // have mattered, in either direction. A single large, unpaced body is what
+  // actually keeps the client mid-write when the server responds.)
+  it('delivers an early-return status code to a client still mid-upload of a large body', async () => {
     const server = createAdminServer(deps);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address();
 
-    let capturedError = null;
-    const onUncaught = (err) => { capturedError = err; };
-    process.on('uncaughtException', onUncaught);
-
     try {
-      await new Promise((resolve) => {
-        const socket = net.connect(port, '127.0.0.1', () => {
-          socket.setNoDelay(true);
-          // Every one of the routes named in the fix ('/', the unauthenticated
-          // gate, the locked-mode 409) is reachable with zero setup -- this
-          // targets '/', the simplest of the three.
-          socket.write(
-            'POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 5000000\r\nConnection: keep-alive\r\n\r\n',
-          );
-          socket.write('x'.repeat(1000)); // far short of the declared 5,000,000 bytes
-          setTimeout(() => {
-            if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy();
-            else socket.destroy();
-            resolve();
-          }, 20);
-        });
-        socket.on('error', () => {}); // the client side resetting its own socket is expected
-      });
+      const body = new Uint8Array(5 * 1024 * 1024).fill(0x78); // 5MB
+      const response = await fetch(`http://127.0.0.1:${port}/api/mode`, { method: 'POST', body });
 
-      // Give the reset time to actually reach the server and be processed.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      expect(capturedError).toBeNull();
-
-      // The server must still be answering ordinary requests afterward.
-      const status = await new Promise((resolve, reject) => {
-        const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/' }, (res) => {
-          res.resume();
-          resolve(res.statusCode);
-        });
-        req.on('error', reject);
-        req.end();
-      });
-      expect(status).toBe(200);
+      // The status must actually reach the client -- not merely "the server
+      // called res.end()", which a torn-down socket can still do while the
+      // client observes nothing but a connection failure (fetch throwing
+      // with an EPIPE cause, in the case this test would have caught).
+      expect(response.status).toBe(401);
     } finally {
-      process.off('uncaughtException', onUncaught);
       server.close();
     }
   });
