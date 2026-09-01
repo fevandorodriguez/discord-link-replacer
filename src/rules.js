@@ -20,6 +20,9 @@ export const RULES = [
     platform: 'instagram',
     hosts: ['instagram.com', 'ddinstagram.com'],
     path: /^\/(p|reel|reels|tv)\/[A-Za-z0-9_-]+/,
+    // Instagram carries an album's position as a query parameter; the mirrors
+    // take it as a trailing path segment instead. Only albums have one.
+    albumIndex: { param: 'img_index', appliesTo: /^\/p\// },
   },
   {
     platform: 'tiktok',

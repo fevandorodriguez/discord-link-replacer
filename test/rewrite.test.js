@@ -191,3 +191,51 @@ describe('rewrite — adjacent text is never re-encoded', () => {
     expect(content).toBe(`https://fxtwitter.com/jack/status/20${tail}`);
   });
 });
+
+describe('rewrite — instagram album index', () => {
+  // Instagram carries the album position as ?img_index=N; the mirrors take it
+  // as a trailing path segment. Index 1 is Instagram's default state when you
+  // share from the first slide, so it means "whole album", not "item one".
+  it('moves the album index into the path', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=3', ALL_ON).content)
+      .toBe('https://kkinstagram.com/p/DcwKEouiDPn/3/');
+  });
+
+  it('drops index 1 so a first-slide share stays a whole album', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=1', ALL_ON).content)
+      .toBe('https://kkinstagram.com/p/DcwKEouiDPn/');
+  });
+
+  it('leaves a post with no album index alone', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/', ALL_ON).content)
+      .toBe('https://kkinstagram.com/p/DcwKEouiDPn/');
+  });
+
+  it('adds the separating slash when the path has none', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn?img_index=2', ALL_ON).content)
+      .toBe('https://kkinstagram.com/p/DcwKEouiDPn/2/');
+  });
+
+  it('keeps other query parameters alongside the moved index', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=2&lang=en', ALL_ON).content)
+      .toBe('https://kkinstagram.com/p/DcwKEouiDPn/2/?lang=en');
+  });
+
+  it.each(['abc', '0', '-2', '1.5', ''])(
+    'drops a nonsensical index (%s) rather than building a broken path',
+    (value) => {
+      expect(rewrite(`https://www.instagram.com/p/DcwKEouiDPn/?img_index=${value}`, ALL_ON).content)
+        .toBe('https://kkinstagram.com/p/DcwKEouiDPn/');
+    },
+  );
+
+  it('ignores an album index on a reel, which has no album', () => {
+    expect(rewrite('https://www.instagram.com/reel/Cabc123/?img_index=2', ALL_ON).content)
+      .toBe('https://kkinstagram.com/reel/Cabc123/');
+  });
+
+  it('does not touch an img_index on another platform', () => {
+    expect(rewrite('https://x.com/jack/status/20?img_index=2', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20?img_index=2');
+  });
+});

@@ -89,6 +89,26 @@ export function rewrite(content, platforms) {
 }
 
 // Returns the rewritten URL, or null if this URL should be left alone.
+// Instagram writes the album position as ?img_index=N; the mirrors read it as a
+// trailing path segment. Index 1 is what Instagram adds when you share from the
+// first slide, so it carries no deliberate choice — treat it as "whole album".
+// The parameter is always consumed, so it never survives into the rewritten URL.
+function applyAlbumIndex(url, rule) {
+  const spec = rule.albumIndex;
+  if (!spec) return;
+
+  const value = url.searchParams.get(spec.param);
+  if (value === null) return;
+  url.searchParams.delete(spec.param);
+
+  if (!spec.appliesTo.test(url.pathname)) return;
+  if (!/^\d+$/.test(value)) return;
+
+  const index = Number(value);
+  if (index < 2) return;
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/${index}/`;
+}
+
 function rewriteUrl(raw, platforms) {
   let url;
   try {
@@ -110,5 +130,6 @@ function rewriteUrl(raw, platforms) {
   url.hostname = target;
   url.port = '';
   stripTracking(url);
+  applyAlbumIndex(url, rule);
   return url.toString();
 }
