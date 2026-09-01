@@ -239,3 +239,32 @@ describe('rewrite — instagram album index', () => {
       .toBe('https://fxtwitter.com/jack/status/20?img_index=2');
   });
 });
+
+describe('rewrite — instagram URL forms beyond /p/ and /reel/', () => {
+  // Instagram's app "Copy link" now hands out /share/ links, and the mirrors
+  // also accept stories and username-prefixed post URLs. All are plain host
+  // swaps; only the path matching needed widening.
+  it.each([
+    ['share link', 'https://www.instagram.com/share/BAbCdEfGh1/', 'https://kkinstagram.com/share/BAbCdEfGh1/'],
+    ['story', 'https://www.instagram.com/stories/someuser/3512345678901234567/', 'https://kkinstagram.com/stories/someuser/3512345678901234567/'],
+    ['user post', 'https://www.instagram.com/someuser/p/DcwKEouiDPn/', 'https://kkinstagram.com/someuser/p/DcwKEouiDPn/'],
+    ['user reel', 'https://www.instagram.com/someuser/reel/DcwKEouiDPn/', 'https://kkinstagram.com/someuser/reel/DcwKEouiDPn/'],
+    ['username with a dot', 'https://www.instagram.com/some.user/p/DcwKEouiDPn/', 'https://kkinstagram.com/some.user/p/DcwKEouiDPn/'],
+  ])('rewrites a %s', (_label, input, expected) => {
+    expect(rewrite(input, ALL_ON).content).toBe(expected);
+  });
+
+  it('moves the album index on a username-prefixed post too', () => {
+    expect(rewrite('https://www.instagram.com/someuser/p/DcwKEouiDPn/?img_index=2', ALL_ON).content)
+      .toBe('https://kkinstagram.com/someuser/p/DcwKEouiDPn/2/');
+  });
+
+  it.each([
+    ['a bare profile', 'https://www.instagram.com/someuser/'],
+    ['a followers page', 'https://www.instagram.com/someuser/followers/'],
+    ['an explore page', 'https://www.instagram.com/explore/tags/cats/'],
+    ['the site root', 'https://www.instagram.com/'],
+  ])('still ignores %s', (_label, input) => {
+    expect(rewrite(input, ALL_ON).changed).toBe(false);
+  });
+});
