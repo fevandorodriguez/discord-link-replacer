@@ -27,53 +27,53 @@ function fakeMessage(overrides = {}) {
 
 describe('ignoreReason', () => {
   it('allows an ordinary user message with a link', () => {
-    expect(ignoreReason(fakeMessage(), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage(), BOT_ID, 'repost')).toBeNull();
   });
 
   it('ignores messages from bots', () => {
-    expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID)).toBe('bot');
+    expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID, 'repost')).toBe('bot');
   });
 
   it('ignores messages sent by a webhook', () => {
-    expect(ignoreReason(fakeMessage({ webhookId: 'hook-1' }), BOT_ID)).toBe('webhook');
+    expect(ignoreReason(fakeMessage({ webhookId: 'hook-1' }), BOT_ID, 'repost')).toBe('webhook');
   });
 
   it('ignores direct messages', () => {
-    expect(ignoreReason(fakeMessage({ guild: null }), BOT_ID)).toBe('not-a-guild');
+    expect(ignoreReason(fakeMessage({ guild: null }), BOT_ID, 'repost')).toBe('not-a-guild');
   });
 
   it('ignores system messages', () => {
-    expect(ignoreReason(fakeMessage({ system: true }), BOT_ID)).toBe('system');
+    expect(ignoreReason(fakeMessage({ system: true }), BOT_ID, 'repost')).toBe('system');
   });
 
   it('ignores messages with attachments, which a webhook cannot reproduce', () => {
-    expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID)).toBe('has-attachments');
+    expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID, 'repost')).toBe('has-attachments');
   });
 
   it('ignores messages with stickers', () => {
-    expect(ignoreReason(fakeMessage({ stickers: { size: 1 } }), BOT_ID)).toBe('has-stickers');
+    expect(ignoreReason(fakeMessage({ stickers: { size: 1 } }), BOT_ID, 'repost')).toBe('has-stickers');
   });
 
   it('ignores messages carrying a poll', () => {
-    expect(ignoreReason(fakeMessage({ poll: { question: { text: 'which' } } }), BOT_ID)).toBe('has-poll');
+    expect(ignoreReason(fakeMessage({ poll: { question: { text: 'which' } } }), BOT_ID, 'repost')).toBe('has-poll');
   });
 
   it('ignores forwarded messages', () => {
-    expect(ignoreReason(fakeMessage({ reference: { type: 1 } }), BOT_ID)).toBe('forwarded');
+    expect(ignoreReason(fakeMessage({ reference: { type: 1 } }), BOT_ID, 'repost')).toBe('forwarded');
   });
 
   it('allows a plain reply, which is not a forward', () => {
-    expect(ignoreReason(fakeMessage({ reference: { type: 0, messageId: 'msg-0' } }), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage({ reference: { type: 0, messageId: 'msg-0' } }), BOT_ID, 'repost')).toBeNull();
   });
 
   it('ignores channels where the bot lacks permissions', () => {
     const channel = { id: 'chan-1', permissionsFor: () => ({ has: () => false }) };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
   });
 
   it('ignores a channel it cannot resolve permissions for', () => {
     const channel = { id: 'chan-1', permissionsFor: () => null };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
   });
 
   it('ignores a message whose author is denied Embed Links in the channel', () => {
@@ -86,13 +86,13 @@ describe('ignoreReason', () => {
         has: (flag) => (who === member ? flag !== PermissionFlagsBits.EmbedLinks : true),
       }),
     };
-    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBe('author-cannot-embed');
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID, 'repost')).toBe('author-cannot-embed');
   });
 
   it('allows a message whose author has Embed Links', () => {
     const member = { id: 'member-1' };
     const channel = { id: 'chan-1', permissionsFor: () => ({ has: () => true }) };
-    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID, 'repost')).toBeNull();
   });
 
   it('falls back to the author when there is no member, and fails closed if unresolvable', () => {
@@ -100,7 +100,7 @@ describe('ignoreReason', () => {
       id: 'chan-1',
       permissionsFor: (who) => (who === BOT_ID ? { has: () => true } : null),
     };
-    expect(ignoreReason(fakeMessage({ channel, member: null }), BOT_ID)).toBe('author-cannot-embed');
+    expect(ignoreReason(fakeMessage({ channel, member: null }), BOT_ID, 'repost')).toBe('author-cannot-embed');
   });
 
   it('ignores a channel missing just one of the required permissions', () => {
@@ -113,7 +113,62 @@ describe('ignoreReason', () => {
         has: (flag) => flag !== PermissionFlagsBits.SendMessages,
       }),
     };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
+  });
+
+  describe('ignoreReason — mode-dependent guards', () => {
+    it.each([
+      ['attachments', { attachments: { size: 1 } }, 'has-attachments'],
+      ['stickers', { stickers: { size: 1 } }, 'has-stickers'],
+      ['a poll', { poll: { question: { text: 'which' } } }, 'has-poll'],
+      ['a forward', { reference: { type: 1 } }, 'forwarded'],
+    ])('still skips %s in repost mode', (_label, override, expected) => {
+      expect(ignoreReason(fakeMessage(override), BOT_ID, 'repost')).toBe(expected);
+    });
+
+    it.each([
+      ['attachments', { attachments: { size: 1 } }],
+      ['stickers', { stickers: { size: 1 } }],
+      ['a poll', { poll: { question: { text: 'which' } } }],
+      ['a forward', { reference: { type: 1 } }],
+    ])('handles %s in suppress mode, which destroys nothing', (_label, override) => {
+      expect(ignoreReason(fakeMessage(override), BOT_ID, 'suppress')).toBeNull();
+    });
+
+    it('requires Manage Webhooks in repost mode', () => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => ({
+          has: (flag) => !(who === BOT_ID && flag === PermissionFlagsBits.ManageWebhooks),
+        }),
+      };
+      expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
+    });
+
+    it('does not require Manage Webhooks in suppress mode', () => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => ({
+          has: (flag) => !(who === BOT_ID && flag === PermissionFlagsBits.ManageWebhooks),
+        }),
+      };
+      expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'suppress')).toBeNull();
+    });
+
+    it.each(['repost', 'suppress'])('still skips a bot author in %s mode', (mode) => {
+      expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID, mode)).toBe('bot');
+    });
+
+    it.each(['repost', 'suppress'])('still skips an author denied Embed Links in %s mode', (mode) => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => (who === BOT_ID
+          ? { has: () => true }
+          : { has: (flag) => flag !== PermissionFlagsBits.EmbedLinks }),
+      };
+      expect(ignoreReason(fakeMessage({ channel, member: { id: 'user-1' } }), BOT_ID, mode))
+        .toBe('author-cannot-embed');
+    });
   });
 });
 
