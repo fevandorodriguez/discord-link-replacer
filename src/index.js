@@ -35,13 +35,15 @@ client.once(Events.ClientReady, (ready) => {
     .filter(([, s]) => s.enabled)
     .map(([name, s]) => `${name}→${s.domain}`)
     .join(', ');
-  logger.info(`Logged in as ${ready.user.tag}. Rewriting: ${enabled || 'nothing'}`);
+  logger.info(`Logged in as ${ready.user.tag} in ${config.mode} mode. Rewriting: ${enabled || 'nothing'}`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
   if (!webhooks) return; // not logged in yet
   try {
-    const outcome = await handleMessage(message, { platforms: config.platforms, webhooks, logger });
+    const outcome = await handleMessage(message, {
+      mode: config.mode, platforms: config.platforms, webhooks, logger,
+    });
     if (outcome === 'missing-permissions' && !warnedChannels.has(message.channel.id)) {
       warnedChannels.add(message.channel.id);
       logger.warn(`Missing Manage Messages / Manage Webhooks in #${message.channel.name ?? message.channel.id}; skipping this channel.`);

@@ -236,3 +236,57 @@ describe('handleMessage', () => {
     expect(message.delete).not.toHaveBeenCalled();
   });
 });
+
+describe('handleMessage — mode dispatch', () => {
+  const PLATFORMS_ON = {
+    twitter: { enabled: true, domain: 'fxtwitter.com' },
+    instagram: { enabled: true, domain: 'oginstagram.com' },
+    tiktok: { enabled: true, domain: 'vxtiktok.com' },
+    reddit: { enabled: true, domain: 'rxddit.com' },
+    bluesky: { enabled: true, domain: 'fxbsky.app' },
+  };
+  const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
+
+  it('suppresses and replies in suppress mode, deleting nothing', async () => {
+    const message = fakeMessage({
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      reply: vi.fn(async () => {}),
+      suppressEmbeds: vi.fn(async () => {}),
+      delete: vi.fn(),
+    });
+    const webhooks = { get: vi.fn() };
+
+    expect(await handleMessage(message, {
+      mode: 'suppress', platforms: PLATFORMS_ON, webhooks, logger: silentLogger,
+    })).toBe('suppressed');
+    expect(message.suppressEmbeds).toHaveBeenCalled();
+    expect(message.delete).not.toHaveBeenCalled();
+    expect(webhooks.get).not.toHaveBeenCalled();
+  });
+
+  it('reposts through a webhook in repost mode, suppressing nothing', async () => {
+    const send = vi.fn(async () => {});
+    const message = fakeMessage({
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(async () => {}),
+    });
+
+    expect(await handleMessage(message, {
+      mode: 'repost',
+      platforms: PLATFORMS_ON,
+      webhooks: { get: vi.fn(async () => ({ send })) },
+      logger: silentLogger,
+    })).toBe('replaced');
+    expect(message.delete).toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
+  });
+
+  it('returns unchanged in either mode when no link matches', async () => {
+    const message = fakeMessage({ content: 'just talking', reply: vi.fn(), delete: vi.fn() });
+    expect(await handleMessage(message, {
+      mode: 'suppress', platforms: PLATFORMS_ON, webhooks: { get: vi.fn() }, logger: silentLogger,
+    })).toBe('unchanged');
+    expect(message.reply).not.toHaveBeenCalled();
+  });
+});

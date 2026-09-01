@@ -1,6 +1,7 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { rewrite } from './rewrite.js';
 import { deliver as repostDeliver } from './delivery/repost.js';
+import { deliver as suppressDeliver } from './delivery/suppress.js';
 
 const BASE_PERMISSIONS = [
   PermissionFlagsBits.ManageMessages,
@@ -46,12 +47,13 @@ export function ignoreReason(message, botUserId, mode) {
   return null;
 }
 
-export async function handleMessage(message, { platforms, webhooks, logger }) {
-  const reason = ignoreReason(message, message.client?.user?.id);
+export async function handleMessage(message, { mode, platforms, webhooks, logger }) {
+  const reason = ignoreReason(message, message.client?.user?.id, mode);
   if (reason) return reason;
 
   const { changed, content } = rewrite(message.content, platforms);
   if (!changed) return 'unchanged';
 
-  return repostDeliver(message, content, { webhooks, logger });
+  const deliver = mode === 'suppress' ? suppressDeliver : repostDeliver;
+  return deliver(message, content, { webhooks, logger });
 }

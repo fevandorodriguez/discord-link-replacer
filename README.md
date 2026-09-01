@@ -28,9 +28,11 @@ working embed.
 
 The bot needs these permissions when you invite it to a server:
 
-- **Manage Messages** — to delete the original message after reposting it.
+- **Manage Messages** — to delete the original message after reposting it
+  (repost mode), or to suppress its embed (suppress mode).
 - **Manage Webhooks** — to create and reuse the per-channel webhook it
-  posts through.
+  posts through. Required only for **repost mode**; suppress mode never
+  touches a webhook.
 - **Send Messages** — to post the replacement, and for the plain-reply
   fallback used when a channel has run out of webhook slots.
 
@@ -93,6 +95,51 @@ project directory, so editing it and running `docker compose restart`
 picks the change up — no rebuild. (The file is also baked into the image
 by the `Dockerfile`, so a container run without that mount uses the
 copy from build time.)
+
+## Delivery modes
+
+How a rewritten link reaches the channel is controlled by `LINKFIX_MODE`
+(or `mode` in `config.json`; the env var wins):
+
+```
+LINKFIX_MODE=repost   # default
+LINKFIX_MODE=suppress
+```
+
+- **`repost`** (default) — today's behaviour, described above: delete the
+  original message and repost the fixed link through a channel webhook
+  wearing the author's name and avatar. The channel ends up with exactly
+  one message.
+- **`suppress`** — leave the original message exactly as the author wrote
+  it, reply to it with the fixed link, then strip the embed from the
+  original. Nothing is deleted.
+
+Repost is the default because it's the behaviour this bot has always had.
+Suppress mode exists as a lower-privilege, non-destructive alternative for
+servers where deleting and reimpersonating members isn't acceptable, and
+as an emergency rollback path: if suppress mode misbehaves in production,
+setting `LINKFIX_MODE=repost` and restarting returns to the known-good
+repost behaviour in seconds, with no rebuild — a plain process restart
+locally, or `docker compose up -d` under Compose (not `restart`, which
+doesn't re-read `.env`).
+
+Suppress mode also needs less from the server: **Manage Messages** and
+**Send Messages** are enough — it never requires **Manage Webhooks**,
+since it never posts through a webhook. See Invite above.
+
+Suppress mode's limits:
+
+- **Two messages per link, not one.** The original stays, and the fixed
+  link arrives as a separate reply — repost mode's single-message result
+  doesn't apply here.
+- **Suppressing embeds is all-or-nothing per message.** Discord's
+  `suppressEmbeds` hides every embed on the message, not just the one
+  for the rewritten link. If the original message contained an unrelated
+  link too, that embed disappears as well, and only the rewritten link's
+  embed comes back, in the reply.
+- **The reply is posted by the bot, not the author.** Unlike a repost
+  (which wears the author's name and avatar via the webhook), the
+  suppress-mode reply is visibly the bot's own message.
 
 ## Running
 
