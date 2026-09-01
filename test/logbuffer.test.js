@@ -62,4 +62,56 @@ describe('createLogBuffer', () => {
     buffer.entries().push({ at: 'x', level: 'info', text: 'injected' });
     expect(buffer.entries()).toHaveLength(1);
   });
+
+  it('coerces non-string text to string to prevent content leaks', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', { originalContent: 'secret', channelId: 'C1' });
+    const entries = buffer.entries();
+    expect(entries[0].text).not.toContain('secret');
+    expect(entries[0].text).toBe('[object Object]');
+  });
+
+  it('returns deep copies so mutating an entry does not corrupt the buffer', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', 'one');
+    const first = buffer.entries()[0];
+    first.text = 'TAMPERED';
+    expect(buffer.entries()[0].text).toBe('one');
+  });
+
+  it('passes all arguments to the base logger, recording only the first', () => {
+    const base = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const buffer = createLogBuffer();
+    const logger = buffer.attach(base);
+
+    logger.info('message', new Error('stack trace'), { metadata: 'extra' });
+
+    expect(base.info).toHaveBeenCalledWith('message', new Error('stack trace'), { metadata: 'extra' });
+    expect(base.info).toHaveBeenCalledTimes(1);
+    // Only 'message' is recorded, not the stack trace or metadata
+    expect(buffer.entries()[0].text).toBe('message');
+  });
+
+  it('enforces positive integer size, falling back to default for nonsense values', () => {
+    // NaN should use default size (200) and evict properly
+    const bufferNaN = createLogBuffer(NaN);
+    for (let i = 0; i < 250; i++) bufferNaN.record('info', `item${i}`);
+    expect(bufferNaN.entries()).toHaveLength(200);
+    expect(bufferNaN.entries()[0].text).toBe('item50');
+
+    // 0 should use default size (200) and evict properly
+    const bufferZero = createLogBuffer(0);
+    for (let i = 0; i < 250; i++) bufferZero.record('info', `item${i}`);
+    expect(bufferZero.entries()).toHaveLength(200);
+
+    // Negative should use default size (200) and evict properly
+    const bufferNegative = createLogBuffer(-5);
+    for (let i = 0; i < 250; i++) bufferNegative.record('info', `item${i}`);
+    expect(bufferNegative.entries()).toHaveLength(200);
+
+    // Non-integer should use default size (200) and evict properly
+    const bufferString = createLogBuffer('abc');
+    for (let i = 0; i < 250; i++) bufferString.record('info', `item${i}`);
+    expect(bufferString.entries()).toHaveLength(200);
+  });
 });
