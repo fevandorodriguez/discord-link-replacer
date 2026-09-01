@@ -71,7 +71,8 @@ guess:
 
 | Mirror | Behaviour |
 |---|---|
-| `uuinstagram.com` | In use. Sets `og:url` to the original post, so the embed title links back to Instagram. Album index via path. Serves a *relative* `og:video` URL, which may embed less reliably than an absolute one. |
+| `oginstagram.com` | In use. Verified working in Discord. Note it serves 403 to datacenter IPs, so it cannot be probed with `curl` from a VPS — that does not affect the bot, which never fetches the mirror itself. |
+| `uuinstagram.com` | Works, including reels, though reels can be slow to appear. Sets `og:url` to the original post; album index via path. Serves a relative `og:video` URL. |
 | `toinstagram.com` | Same InstaFix family as `uuinstagram`, with the same relative `og:video`. The natural fallback. |
 | `instagirlcock.com` | Also sets `og:url`, with an absolute `og:image`, full attribution and the caption. Functionally the strongest tested; the domain name is the problem. |
 | `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |

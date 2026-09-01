@@ -176,7 +176,7 @@ describe('buildPayload', () => {
 
 const PLATFORMS_ON = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
-  instagram: { enabled: true, domain: 'uuinstagram.com' },
+  instagram: { enabled: true, domain: 'oginstagram.com' },
   tiktok: { enabled: true, domain: 'vxtiktok.com' },
   reddit: { enabled: true, domain: 'rxddit.com' },
   bluesky: { enabled: true, domain: 'fxbsky.app' },
