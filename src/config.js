@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { PLATFORMS, DEFAULT_DOMAINS } from './rules.js';
 
+export const MODES = ['repost', 'suppress'];
+const DEFAULT_MODE = 'repost';
+
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
 export function loadConfig({ file = 'config.json', env = process.env } = {}) {
@@ -22,6 +25,7 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   for (const key of Object.keys(raw)) {
+    if (key === 'mode') continue;
     if (!PLATFORMS.includes(key)) {
       throw new Error(`Unknown platform "${key}" in ${file}. Known platforms: ${PLATFORMS.join(', ')}.`);
     }
@@ -44,7 +48,9 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
     platforms[platform] = { enabled, domain };
   }
 
-  return { token, platforms };
+  const mode = resolveMode(raw.mode, env, file);
+
+  return { token, mode, platforms };
 }
 
 function envDomain(env, platform) {
@@ -61,4 +67,13 @@ function envEnabled(env, platform) {
   if (normalised === 'true') return true;
   if (normalised === 'false') return false;
   throw new Error(`Invalid ${name}: expected "true" or "false", got "${value}".`);
+}
+
+function resolveMode(fromFile, env, file) {
+  const raw = env.LINKFIX_MODE ?? fromFile ?? DEFAULT_MODE;
+  const mode = String(raw).toLowerCase();
+  if (!MODES.includes(mode)) {
+    throw new Error(`Invalid mode "${raw}" in ${file}; expected one of ${MODES.join(', ')}.`);
+  }
+  return mode;
 }

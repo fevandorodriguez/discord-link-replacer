@@ -140,3 +140,36 @@ describe('loadConfig — the file must contain a JSON object', () => {
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(file);
   });
 });
+
+describe('loadConfig — mode', () => {
+  it('defaults to repost when unset', () => {
+    write(VALID);
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).mode).toBe('repost');
+  });
+
+  it('reads the mode from the config file', () => {
+    write({ ...VALID, mode: 'suppress' });
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).mode).toBe('suppress');
+  });
+
+  it('lets an env var override the mode, case-insensitively', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'SUPPRESS' } });
+    expect(config.mode).toBe('suppress');
+  });
+
+  it.each(['edit', '', 'repost ', 'true'])('throws on the invalid mode %s', (value) => {
+    write({ ...VALID, mode: value });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/mode/i);
+  });
+
+  it('names the valid modes in the error', () => {
+    write({ ...VALID, mode: 'edit' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/repost.*suppress|suppress.*repost/);
+  });
+
+  it('does not mistake mode for an unknown platform', () => {
+    write({ ...VALID, mode: 'suppress' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).not.toThrow();
+  });
+});
