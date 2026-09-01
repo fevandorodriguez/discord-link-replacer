@@ -21,19 +21,24 @@ export function ignoreReason(message, botUserId, mode) {
 
   // These four exist only to stop repost destroying content a webhook cannot
   // reproduce. Suppress mode deletes nothing, so it handles them normally.
-  if (mode === 'repost') {
+  // Branch written as "not suppress" rather than "is repost" so an unrecognised
+  // mode defaults to the guarded path instead of the permissive one.
+  if (mode !== 'suppress') {
     if (message.attachments?.size > 0) return 'has-attachments';
     if (message.stickers?.size > 0) return 'has-stickers';
     if (message.poll) return 'has-poll';
     if (message.reference?.type === REFERENCE_TYPE_FORWARD) return 'forwarded';
   }
 
-  const required = mode === 'repost' ? REPOST_PERMISSIONS : BASE_PERMISSIONS;
+  const required = mode !== 'suppress' ? REPOST_PERMISSIONS : BASE_PERMISSIONS;
   const permissions = message.channel.permissionsFor(botUserId);
   if (!permissions || !required.every((flag) => permissions.has(flag))) {
     return 'missing-permissions';
   }
 
+  // Suppress mode still posts an embed on the author's behalf, so even though
+  // it does not use a webhook, a server that denied this user Embed Links is
+  // still being overridden. This check applies to both modes: it is not mode-gated.
   const authorPermissions = message.channel.permissionsFor(message.member ?? message.author);
   if (!authorPermissions || !authorPermissions.has(PermissionFlagsBits.EmbedLinks)) {
     return 'author-cannot-embed';

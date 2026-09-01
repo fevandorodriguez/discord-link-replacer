@@ -169,6 +169,12 @@ describe('ignoreReason', () => {
       expect(ignoreReason(fakeMessage({ channel, member: { id: 'user-1' } }), BOT_ID, mode))
         .toBe('author-cannot-embed');
     });
+
+    it('defaults an unrecognised mode to the guarded path', () => {
+      // An unknown mode value should fail safe toward repost's stricter guards,
+      // not toward suppress's permissive behavior.
+      expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID, 'nonsense')).toBe('has-attachments');
+    });
   });
 });
 
