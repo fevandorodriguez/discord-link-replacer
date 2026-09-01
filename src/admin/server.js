@@ -71,7 +71,20 @@ export async function handleRequest(req, res, deps) {
     // out for the lockout window by mistyping the password 5 times.
     const ip = req.socket.remoteAddress ?? 'unknown';
     if (!limiter.allowed(ip)) {
-      return html(res, 429, renderLogin('Too many attempts. Try again later.'));
+      html(res, 429, renderLogin('Too many attempts. Try again later.'));
+      // We're responding without ever reading the body. If the client
+      // declared a Content-Length bigger than what it actually sends and
+      // then resets the connection, the socket has no consumer and no error
+      // listener anywhere in this module -- an unhandled 'error' on a raw
+      // net.Socket is a synchronous throw, not a promise rejection, so it
+      // takes down the whole process (the Discord client included) rather
+      // than landing in this handler's own catch. Destroying the request
+      // stream (after the response is already queued) removes it as a
+      // listener-less source of that error. See the identical comment on
+      // every other early-return branch below for the general rule: any
+      // response path that does not call readBody() must destroy req.
+      req.destroy();
+      return;
     }
 
     const params = new URLSearchParams(await readBody(req));
@@ -90,29 +103,41 @@ export async function handleRequest(req, res, deps) {
 
   if (req.method === 'POST' && path === '/logout') {
     res.writeHead(303, { location: '/', 'set-cookie': `session=; Max-Age=0; ${COOKIE_FLAGS}` });
-    return res.end();
+    res.end();
+    req.destroy(); // never reads the body -- see the /login 429 branch above
+    return;
   }
 
   if (path === '/') {
-    return html(res, 200, signedIn ? renderDashboard() : renderLogin());
+    html(res, 200, signedIn ? renderDashboard() : renderLogin());
+    req.destroy(); // matches every method (GET and POST both land here); never reads the body
+    return;
   }
 
-  if (!signedIn) return json(res, 401, { error: 'Not signed in.' });
+  if (!signedIn) {
+    json(res, 401, { error: 'Not signed in.' });
+    req.destroy(); // never reads the body
+    return;
+  }
 
   if (req.method === 'GET' && path === '/api/state') {
-    return json(res, 200, {
+    json(res, 200, {
       mode: modeStore.current(),
       source: modeStore.source(),
       locked: modeStore.locked(),
       entries: logBuffer.entries(),
     });
+    req.destroy(); // GET is not expected to carry a body, but nothing reads it if it does
+    return;
   }
 
   if (req.method === 'POST' && path === '/api/mode') {
     if (modeStore.locked()) {
-      return json(res, 409, {
+      json(res, 409, {
         error: 'Mode is fixed by LINKFIX_MODE in the environment; unset it to control the mode from here.',
       });
+      req.destroy(); // returns before ever calling readBody()
+      return;
     }
 
     let requested;
@@ -137,7 +162,8 @@ export async function handleRequest(req, res, deps) {
     return json(res, 200, { mode: modeStore.current() });
   }
 
-  return json(res, 404, { error: 'Not found.' });
+  json(res, 404, { error: 'Not found.' });
+  req.destroy(); // catch-all; never reads the body
 }
 
 // Returns null when there is no usable password. Fail closed: a
@@ -149,14 +175,28 @@ export function createAdminServer(deps) {
     return null;
   }
 
-  const withLimiter = { limiter: createRateLimiter(), ...deps };
-  return createServer((req, res) => {
+  // deps.limiter ?? createRateLimiter(), not `{ limiter: createRateLimiter(), ...deps }`:
+  // the latter lets an explicit `limiter: undefined` in deps silently win over the
+  // default (object spread always applies every own key from the source, including
+  // ones whose value is undefined), crashing the first /login POST.
+  const withLimiter = { ...deps, limiter: deps.limiter ?? createRateLimiter() };
+  const server = createServer((req, res) => {
     handleRequest(req, res, withLimiter).catch((error) => {
       logger.error(`admin request failed: ${error.message}`);
       if (!res.writableEnded) {
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end('{"error":"Internal error."}');
       }
+      req.destroy();
     });
   });
+
+  // Defence in depth: a request that fails at the HTTP parser level (before
+  // handleRequest even runs -- a malformed request line, invalid headers)
+  // fires here instead. Destroying the socket ourselves, rather than relying
+  // on Node's default response-then-close behavior, avoids writing to a
+  // socket the client may have already reset.
+  server.on('clientError', (error, socket) => socket.destroy());
+
+  return server;
 }
