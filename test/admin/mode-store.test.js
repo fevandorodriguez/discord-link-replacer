@@ -63,11 +63,50 @@ describe('createModeStore', () => {
     expect(store.current()).toBe('repost');
   });
 
+  // I2: `set()` used to build its rejection message with a plain template
+  // literal, `${next}`, which coerces `next` via ToPrimitive. `next` is
+  // attacker-controlled JSON, and an object whose own toString/valueOf
+  // aren't callable makes that coercion itself throw a bare TypeError --
+  // before the error even gets tagged MODE_REJECTED -- from the
+  // error-construction line, not from anything resembling validation.
+  // These reproduce the exact two request bodies the finding was verified
+  // with.
+  it.each([
+    { toString: 1 },
+    { valueOf: null, toString: null },
+  ])('rejects a hostile mode value as MODE_REJECTED, not a bare TypeError (case %#)', (hostile) => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+    // Four assertions must run; if store.set(hostile) stops throwing at
+    // all, only the last one (outside the catch) would fire, and vitest
+    // fails the test on the count mismatch rather than silently passing.
+    expect.assertions(4);
+    try {
+      store.set(hostile);
+    } catch (e) {
+      expect(e).not.toBeInstanceOf(TypeError);
+      expect(e.code).toBe('MODE_REJECTED');
+      expect(e.message).toMatch(/mode/i);
+    }
+    expect(store.current()).toBe('repost');
+  });
+
   it('defaults to the source being the file when built from a default', () => {
     const store = createModeStore({ mode: 'repost', modeSource: 'default', file });
     expect(store.locked()).toBe(false);
     store.set('suppress');
     expect(JSON.parse(readFileSync(file, 'utf8')).mode).toBe('suppress');
+  });
+
+  // Minor: source() previously returned the boot-time modeSource forever,
+  // so after a successful write from "default" or (via a later restart)
+  // "config.json" boot, the panel would keep reporting the old source
+  // rather than the fact that the mode it now shows came from the write it
+  // just made.
+  it('reports the source as config.json after a successful write, even when it booted from default', () => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'default', file });
+    expect(store.source()).toBe('default');
+    store.set('suppress');
+    expect(store.source()).toBe('config.json');
   });
 
   it('rejects an array root and leaves the file alone', () => {

@@ -5,6 +5,11 @@ import { renderLogin, renderDashboard } from './page.js';
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const COOKIE_FLAGS = 'HttpOnly; Secure; SameSite=Strict; Path=/';
 const BODY_LIMIT = 4096;
+// A short or empty secret is brute-forceable (or, for '', publicly known --
+// see createAdminServer below), which would let a forged cookie sail past
+// verifySession. 32 chars gives at least 128 bits from a hex secret, more
+// from anything richer.
+const MIN_SESSION_SECRET_LENGTH = 32;
 
 // Reads at most BODY_LIMIT bytes from the request body, then stops pulling
 // further data from the socket. A login form and a two-key JSON object are
@@ -43,13 +48,13 @@ function authenticated(req, secret) {
   return verifySession(cookieValue(req.headers.cookie, 'session'), secret);
 }
 
-function json(res, code, payload) {
-  res.writeHead(code, { 'content-type': 'application/json' });
+function json(res, code, payload, headers = {}) {
+  res.writeHead(code, { 'content-type': 'application/json', ...headers });
   res.end(JSON.stringify(payload));
 }
 
-function html(res, code, body) {
-  res.writeHead(code, { 'content-type': 'text/html; charset=utf-8' });
+function html(res, code, body, headers = {}) {
+  res.writeHead(code, { 'content-type': 'text/html; charset=utf-8', ...headers });
   res.end(body);
 }
 
@@ -93,8 +98,14 @@ export async function handleRequest(req, res, deps) {
     return res.end();
   }
 
-  if (path === '/') {
-    return html(res, 200, signedIn ? renderDashboard() : renderLogin());
+  // /login handled here too, not just POST above: a password manager stores
+  // the submission URL and offers a saved entry by navigating straight to
+  // it, so a GET there must land on the same login form as `/` rather than
+  // the JSON 401 every other unauthenticated route gets.
+  if (path === '/' || path === '/login') {
+    return signedIn
+      ? html(res, 200, renderDashboard(), { 'cache-control': 'no-store' })
+      : html(res, 200, renderLogin());
   }
 
   if (!signedIn) return json(res, 401, { error: 'Not signed in.' });
@@ -105,7 +116,7 @@ export async function handleRequest(req, res, deps) {
       source: modeStore.source(),
       locked: modeStore.locked(),
       entries: logBuffer.entries(),
-    });
+    }, { 'cache-control': 'no-store' });
   }
 
   if (req.method === 'POST' && path === '/api/mode') {
@@ -140,12 +151,19 @@ export async function handleRequest(req, res, deps) {
   return json(res, 404, { error: 'Not found.' });
 }
 
-// Returns null when there is no usable password. Fail closed: a
-// misconfigured deploy gets no panel rather than an unprotected one.
+// Returns null when there is no usable password or session secret. Fail
+// closed: a misconfigured deploy gets no panel rather than an unprotected
+// one (an empty or missing SESSION_SECRET, in particular, would let anyone
+// compute the HMAC key and forge a session cookie -- see the same-length
+// check below).
 export function createAdminServer(deps) {
-  const { passwordHash, logger = console } = deps;
+  const { passwordHash, sessionSecret, logger = console } = deps;
   if (typeof passwordHash !== 'string' || !/^[0-9a-f]+:[0-9a-f]+$/.test(passwordHash)) {
     logger.warn('ADMIN_PASSWORD_HASH is missing or malformed; the admin panel will not start.');
+    return null;
+  }
+  if (typeof sessionSecret !== 'string' || sessionSecret.length < MIN_SESSION_SECRET_LENGTH) {
+    logger.warn(`SESSION_SECRET is missing or shorter than ${MIN_SESSION_SECRET_LENGTH} characters; the admin panel will not start.`);
     return null;
   }
 
@@ -156,7 +174,12 @@ export function createAdminServer(deps) {
   const withLimiter = { ...deps, limiter: deps.limiter ?? createRateLimiter() };
   const server = createServer((req, res) => {
     handleRequest(req, res, withLimiter).catch((error) => {
-      logger.error(`admin request failed: ${error.message}`);
+      // Deliberately the base console, not the buffer-attached `logger`:
+      // this runs for every request that errors, including anonymous ones
+      // with no session, and writing it into the ring buffer would let an
+      // unauthenticated visitor evict the real delivery history for free by
+      // generating aborted requests (I1).
+      console.error(`admin request failed: ${error.message}`);
       if (!res.writableEnded) {
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end('{"error":"Internal error."}');

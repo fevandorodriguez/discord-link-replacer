@@ -10,9 +10,18 @@ import { randomBytes } from 'node:crypto';
 const logBuffer = createLogBuffer();
 const logger = logBuffer.attach(console);
 
+// Resolved once and shared by loadConfig and the mode store below, so both
+// read from (and the panel's toggle writes to) the same file. Previously
+// loadConfig() always used its own 'config.json' default while the mode
+// store alone honored LINKFIX_CONFIG_FILE -- harmless while the two
+// happened to coincide, but a real config-file-and-live-mode mismatch as
+// soon as they didn't (see the Docker deploy layout in compose.yml, which
+// now sets this env var).
+const configFile = process.env.LINKFIX_CONFIG_FILE ?? 'config.json';
+
 let config;
 try {
-  config = loadConfig();
+  config = loadConfig({ file: configFile });
 } catch (error) {
   logger.error(error.message);
   process.exit(1);
@@ -21,12 +30,18 @@ try {
 const modeStore = createModeStore({
   mode: config.mode,
   modeSource: config.modeSource,
-  file: process.env.LINKFIX_CONFIG_FILE ?? 'config.json',
+  file: configFile,
 });
 
-// Unset SESSION_SECRET means sessions do not survive a restart. That is an
-// acceptable default for a one-user panel; it is documented, not silent.
-const sessionSecret = process.env.SESSION_SECRET ?? randomBytes(32).toString('hex');
+// Unset OR EMPTY SESSION_SECRET means sessions do not survive a restart.
+// `||`, not `??`: `??` only falls through on null/undefined, and an .env
+// line left as `SESSION_SECRET=` -- easy to end up with by uncommenting
+// .env.example's line without filling it in -- reads back through
+// docker compose's env_file as the empty string, not "unset". `??` would
+// sign every session with that publicly-known empty key. createAdminServer
+// in src/admin/server.js refuses an empty/short secret outright too, as a
+// second, independent layer of defence.
+const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
 const admin = createAdminServer({
   modeStore,
   logBuffer,

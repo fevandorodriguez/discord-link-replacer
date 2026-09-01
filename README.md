@@ -90,11 +90,12 @@ No mirror restores likes or view counts on the original post; engagement
 needs an authenticated action on Instagram's own clients, so any embed
 fixer is a dead end for that by construction.
 
-Under Docker Compose, `config.json` is bind-mounted read-only from the
-project directory, so editing it and running `docker compose restart`
-picks the change up — no rebuild. (The file is also baked into the image
-by the `Dockerfile`, so a container run without that mount uses the
-copy from build time.)
+Under Docker Compose, the whole `data/` directory (not `config.json`
+itself — see Running below for why) is bind-mounted read-write from the
+project directory, so editing `data/config.json` and running
+`docker compose restart` picks the change up — no rebuild. (A default
+`config.json` is also baked into the image by the `Dockerfile`, so a
+container run without that mount uses the copy from build time.)
 
 ## Delivery modes
 
@@ -173,10 +174,26 @@ token — or an invalid one, or Message Content left disabled in the
 Developer Portal — makes the process print a readable error and exit 1
 rather than starting up broken or crash-looping silently.
 
-Compose mounts `./config.json` into the container read-only, so a
-`config.json` change (mirror domains, per-platform enable/disable, `mode`
-when it's not overridden by `LINKFIX_MODE`) needs only
-`docker compose restart` — that rereads the file, no rebuild.
+Compose mounts `./data` (not `./config.json` directly) into the container
+at `/app/data`, read-write, and the container is pointed at
+`/app/data/config.json` via `LINKFIX_CONFIG_FILE` (set in the
+`Dockerfile`). Edit `data/config.json` on the host — that's the live file
+now, the same one the admin panel's mode toggle writes to — and
+`docker compose restart` picks up a hand edit (mirror domains,
+per-platform enable/disable, `mode` when it's not overridden by
+`LINKFIX_MODE`) with no rebuild, exactly as before.
+
+This is a directory mount rather than a single-file mount so the admin
+panel can write to it: bind-mounting one file makes that path its own
+mount point, and on Linux `rename()` onto a mount point fails with EBUSY,
+which broke the panel's atomic write-then-rename on every mode change
+under the old single-file layout. **`data/config.json` must exist in the
+project directory before the first `docker compose up`** — the repo ships
+one, so a normal `git clone`/`git pull` already has it, but if you ever
+delete it, recreate it (e.g. `cp config.json data/config.json`) before
+starting the container, or the bind mount hides the image's own default
+and `loadConfig` fails with a readable "file not found" error rather than
+starting broken.
 
 An `.env` change — **including `LINKFIX_MODE`** — is different: `restart`
 stops and starts the *existing* container, and environment loaded via
@@ -197,8 +214,11 @@ it: `docker compose up -d --force-recreate`.
 A small password-gated page, served from inside the bot process at
 `discord.fev.space`, that shows recent delivery activity and lets you
 switch between `repost` and `suppress` without touching the server. It
-shows only a channel name and a level per event — never a message or a
-rewritten link.
+never shows a message or a rewritten link — but it is not limited to a
+channel name and a level either: an entry can include the channel ID, the
+message ID, the bot's own Discord tag, the platform config, Discord API
+error text, and a full stack trace when something failed. Size what a
+leaked panel password costs you accordingly; see Limits below.
 
 ### Enabling it
 
@@ -214,11 +234,18 @@ deliberate fail-closed behaviour**: an unset or malformed hash means no
 panel, logged as a warning, rather than a panel with a guessable or
 absent password. The bot itself is unaffected either way.
 
-`SESSION_SECRET` is optional. If it's unset, a random secret is
-generated at process start, which means every session (i.e. every signed-
-in browser) is invalidated on restart and you'll need to sign in again.
-Set `SESSION_SECRET` to a fixed value in `.env` if you'd rather sessions
-survive a restart.
+`SESSION_SECRET` is optional. If it's unset — or set but empty, which
+`.env.example` deliberately avoids by shipping the line commented out
+rather than as `SESSION_SECRET=` — a random secret is generated at process
+start, which means every session (i.e. every signed-in browser) is
+invalidated on restart and you'll need to sign in again. Set
+`SESSION_SECRET` to a fixed value of **at least 32 characters** in `.env`
+if you'd rather sessions survive a restart. Unlike unset, an explicit
+value that's too short is **not** filled in for you: the panel logs a
+warning and refuses to start at all, the same fail-closed handling as a
+missing `ADMIN_PASSWORD_HASH` — a short secret is brute-forceable, and a
+forged session cookie is a full bypass of the password gate, so this
+never falls back to "start anyway."
 
 Because these are `.env` values, changing either of them needs
 `docker compose up -d` (not `restart`) to take effect — see the env vs.
@@ -241,6 +268,12 @@ discord.fev.space {
 **Adding this block requires reloading Caddy**, and this Caddy instance
 fronts around ten other, unrelated live apps on the same box — a reload
 affects all of them, not just this one. Treat it accordingly.
+
+The `3000` above must match `ADMIN_PORT` (default 3000 if unset) — if you
+set `ADMIN_PORT` in `.env`, update this block to the same port and reload
+Caddy, or the proxy silently points at the wrong port and the panel
+becomes unreachable through Caddy even though the container itself is
+fine.
 
 ### Limits
 

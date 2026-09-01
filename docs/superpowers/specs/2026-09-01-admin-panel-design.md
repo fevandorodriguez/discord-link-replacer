@@ -81,9 +81,12 @@ Mode already resolves as `LINKFIX_MODE` → `config.json` → default, and
 `loadConfig` reports which source won as `modeSource`.
 
 The panel writes to `config.json`, which is already bind-mounted and already the
-documented file lever. It re-reads and re-validates through the existing
-`loadConfig` path, so a value written by the panel is subject to exactly the same
-validation as one written by hand.
+documented file lever. It does not go through `loadConfig` (that path validates
+the whole config document — platform domains, `enabled` flags, and more — which
+this write has no reason to touch or re-check): the mode store instead validates
+only what its own write needs, directly — the config root is a JSON object, and
+the requested value is one of `MODES` — so a value written by the panel is
+checked, just by a narrower, purpose-built path rather than the full loader.
 
 **When `modeSource` is `LINKFIX_MODE`, the toggle renders disabled**, with text
 naming the variable and saying it must be unset for the panel to take control.
@@ -111,8 +114,9 @@ were posting would be a far larger thing to leak than a mode toggle.
 | Route | Method | Auth | Purpose |
 |---|---|---|---|
 | `/` | GET | session or redirect | Dashboard, or the login form |
+| `/login` | GET | session or redirect | Same as `/` — a saved password-manager entry points here, not `/` |
 | `/login` | POST | none, rate-limited | Verify password, set cookie |
-| `/logout` | POST | session | Clear the cookie |
+| `/logout` | POST | none | Clear the cookie |
 | `/api/state` | GET | session | JSON: mode, modeSource, entries |
 | `/api/mode` | POST | session | Set mode; 409 if env-overridden |
 
@@ -158,8 +162,12 @@ No live HTTP listener in tests.
 
 - Log history is memory-only; a restart clears the panel's view. `docker logs`
   retains the full record.
-- A leaked password permits flipping the mode and reading channel names. The
-  content-free log buffer bounds that.
+- A leaked password permits flipping the mode and reading everything the log
+  buffer holds: channel and message IDs, the bot's Discord tag, the platform
+  config, Discord API error text, and stack traces from unhandled errors. Never
+  message content and never a rewritten URL — the buffer is built to exclude
+  those specifically — but it is not limited to "a channel name and a level," so
+  size the exposure of a leaked password accordingly.
 - The rate limiter is per-process and in-memory, so a restart clears it.
 - One shared password means no attribution: the panel cannot say who changed the
   mode.
