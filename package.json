@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "hash-password": "node scripts/hash-password.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3"
