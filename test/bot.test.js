@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PermissionFlagsBits } from 'discord.js';
-import { ignoreReason, buildPayload, handleMessage } from '../src/bot.js';
+import { ignoreReason, handleMessage } from '../src/bot.js';
 
 const BOT_ID = 'bot-1';
 
@@ -27,53 +27,53 @@ function fakeMessage(overrides = {}) {
 
 describe('ignoreReason', () => {
   it('allows an ordinary user message with a link', () => {
-    expect(ignoreReason(fakeMessage(), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage(), BOT_ID, 'repost')).toBeNull();
   });
 
   it('ignores messages from bots', () => {
-    expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID)).toBe('bot');
+    expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID, 'repost')).toBe('bot');
   });
 
   it('ignores messages sent by a webhook', () => {
-    expect(ignoreReason(fakeMessage({ webhookId: 'hook-1' }), BOT_ID)).toBe('webhook');
+    expect(ignoreReason(fakeMessage({ webhookId: 'hook-1' }), BOT_ID, 'repost')).toBe('webhook');
   });
 
   it('ignores direct messages', () => {
-    expect(ignoreReason(fakeMessage({ guild: null }), BOT_ID)).toBe('not-a-guild');
+    expect(ignoreReason(fakeMessage({ guild: null }), BOT_ID, 'repost')).toBe('not-a-guild');
   });
 
   it('ignores system messages', () => {
-    expect(ignoreReason(fakeMessage({ system: true }), BOT_ID)).toBe('system');
+    expect(ignoreReason(fakeMessage({ system: true }), BOT_ID, 'repost')).toBe('system');
   });
 
   it('ignores messages with attachments, which a webhook cannot reproduce', () => {
-    expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID)).toBe('has-attachments');
+    expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID, 'repost')).toBe('has-attachments');
   });
 
   it('ignores messages with stickers', () => {
-    expect(ignoreReason(fakeMessage({ stickers: { size: 1 } }), BOT_ID)).toBe('has-stickers');
+    expect(ignoreReason(fakeMessage({ stickers: { size: 1 } }), BOT_ID, 'repost')).toBe('has-stickers');
   });
 
   it('ignores messages carrying a poll', () => {
-    expect(ignoreReason(fakeMessage({ poll: { question: { text: 'which' } } }), BOT_ID)).toBe('has-poll');
+    expect(ignoreReason(fakeMessage({ poll: { question: { text: 'which' } } }), BOT_ID, 'repost')).toBe('has-poll');
   });
 
   it('ignores forwarded messages', () => {
-    expect(ignoreReason(fakeMessage({ reference: { type: 1 } }), BOT_ID)).toBe('forwarded');
+    expect(ignoreReason(fakeMessage({ reference: { type: 1 } }), BOT_ID, 'repost')).toBe('forwarded');
   });
 
   it('allows a plain reply, which is not a forward', () => {
-    expect(ignoreReason(fakeMessage({ reference: { type: 0, messageId: 'msg-0' } }), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage({ reference: { type: 0, messageId: 'msg-0' } }), BOT_ID, 'repost')).toBeNull();
   });
 
   it('ignores channels where the bot lacks permissions', () => {
     const channel = { id: 'chan-1', permissionsFor: () => ({ has: () => false }) };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
   });
 
   it('ignores a channel it cannot resolve permissions for', () => {
     const channel = { id: 'chan-1', permissionsFor: () => null };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
   });
 
   it('ignores a message whose author is denied Embed Links in the channel', () => {
@@ -86,13 +86,13 @@ describe('ignoreReason', () => {
         has: (flag) => (who === member ? flag !== PermissionFlagsBits.EmbedLinks : true),
       }),
     };
-    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBe('author-cannot-embed');
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID, 'repost')).toBe('author-cannot-embed');
   });
 
   it('allows a message whose author has Embed Links', () => {
     const member = { id: 'member-1' };
     const channel = { id: 'chan-1', permissionsFor: () => ({ has: () => true }) };
-    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID)).toBeNull();
+    expect(ignoreReason(fakeMessage({ channel, member }), BOT_ID, 'repost')).toBeNull();
   });
 
   it('falls back to the author when there is no member, and fails closed if unresolvable', () => {
@@ -100,7 +100,7 @@ describe('ignoreReason', () => {
       id: 'chan-1',
       permissionsFor: (who) => (who === BOT_ID ? { has: () => true } : null),
     };
-    expect(ignoreReason(fakeMessage({ channel, member: null }), BOT_ID)).toBe('author-cannot-embed');
+    expect(ignoreReason(fakeMessage({ channel, member: null }), BOT_ID, 'repost')).toBe('author-cannot-embed');
   });
 
   it('ignores a channel missing just one of the required permissions', () => {
@@ -113,66 +113,74 @@ describe('ignoreReason', () => {
         has: (flag) => flag !== PermissionFlagsBits.SendMessages,
       }),
     };
-    expect(ignoreReason(fakeMessage({ channel }), BOT_ID)).toBe('missing-permissions');
+    expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
+  });
+
+  describe('ignoreReason — mode-dependent guards', () => {
+    it.each([
+      ['attachments', { attachments: { size: 1 } }, 'has-attachments'],
+      ['stickers', { stickers: { size: 1 } }, 'has-stickers'],
+      ['a poll', { poll: { question: { text: 'which' } } }, 'has-poll'],
+      ['a forward', { reference: { type: 1 } }, 'forwarded'],
+    ])('still skips %s in repost mode', (_label, override, expected) => {
+      expect(ignoreReason(fakeMessage(override), BOT_ID, 'repost')).toBe(expected);
+    });
+
+    it.each([
+      ['attachments', { attachments: { size: 1 } }],
+      ['stickers', { stickers: { size: 1 } }],
+      ['a poll', { poll: { question: { text: 'which' } } }],
+      ['a forward', { reference: { type: 1 } }],
+    ])('handles %s in suppress mode, which destroys nothing', (_label, override) => {
+      expect(ignoreReason(fakeMessage(override), BOT_ID, 'suppress')).toBeNull();
+    });
+
+    it('requires Manage Webhooks in repost mode', () => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => ({
+          has: (flag) => !(who === BOT_ID && flag === PermissionFlagsBits.ManageWebhooks),
+        }),
+      };
+      expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'repost')).toBe('missing-permissions');
+    });
+
+    it('does not require Manage Webhooks in suppress mode', () => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => ({
+          has: (flag) => !(who === BOT_ID && flag === PermissionFlagsBits.ManageWebhooks),
+        }),
+      };
+      expect(ignoreReason(fakeMessage({ channel }), BOT_ID, 'suppress')).toBeNull();
+    });
+
+    it.each(['repost', 'suppress'])('still skips a bot author in %s mode', (mode) => {
+      expect(ignoreReason(fakeMessage({ author: { id: 'x', bot: true } }), BOT_ID, mode)).toBe('bot');
+    });
+
+    it.each(['repost', 'suppress'])('still skips an author denied Embed Links in %s mode', (mode) => {
+      const channel = {
+        id: 'chan-1',
+        permissionsFor: (who) => (who === BOT_ID
+          ? { has: () => true }
+          : { has: (flag) => flag !== PermissionFlagsBits.EmbedLinks }),
+      };
+      expect(ignoreReason(fakeMessage({ channel, member: { id: 'user-1' } }), BOT_ID, mode))
+        .toBe('author-cannot-embed');
+    });
+
+    it('defaults an unrecognised mode to the guarded path', () => {
+      // An unknown mode value should fail safe toward repost's stricter guards,
+      // not toward suppress's permissive behavior.
+      expect(ignoreReason(fakeMessage({ attachments: { size: 1 } }), BOT_ID, 'nonsense')).toBe('has-attachments');
+    });
   });
 });
 
 function fakeMember() {
   return { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/avatar.png' };
 }
-
-describe('buildPayload', () => {
-  it('posts as the member, without re-pinging anyone', () => {
-    const message = fakeMessage({ member: fakeMember() });
-    const payload = buildPayload(message, 'https://fxtwitter.com/jack/status/20');
-    expect(payload).toEqual({
-      content: 'https://fxtwitter.com/jack/status/20',
-      username: 'Mike',
-      avatarURL: 'https://cdn/avatar.png',
-      allowedMentions: { parse: [] },
-    });
-  });
-
-  it('adds a subtext line when the original was a reply', () => {
-    const message = fakeMessage({
-      member: fakeMember(),
-      reference: { type: 0, messageId: 'msg-0' },
-      mentions: { repliedUser: { id: 'user-9' } },
-    });
-    const payload = buildPayload(message, 'https://fxtwitter.com/jack/status/20');
-    expect(payload.content).toBe('-# ↪ replying to <@user-9>\nhttps://fxtwitter.com/jack/status/20');
-  });
-
-  it('drops the subtext line but still rewrites when repliedUser is unresolved', () => {
-    // The replied-to user left, or the message is uncached: repliedUser is
-    // absent even though this is a reply. buildPayload silently omits the
-    // subtext line rather than abandoning the rewrite.
-    const message = fakeMessage({
-      member: fakeMember(),
-      reference: { type: 0, messageId: 'msg-0' },
-    });
-    const payload = buildPayload(message, 'https://fxtwitter.com/jack/status/20');
-    expect(payload.content).toBe('https://fxtwitter.com/jack/status/20');
-  });
-
-  it('passes the thread ID when the message is in a thread', () => {
-    const channel = {
-      id: 'thread-1',
-      isThread: () => true,
-      permissionsFor: () => ({ has: () => true }),
-    };
-    const payload = buildPayload(fakeMessage({ member: fakeMember(), channel }), 'x');
-    expect(payload.threadId).toBe('thread-1');
-  });
-
-  it('falls back to the author username when there is no member', () => {
-    const message = fakeMessage({
-      member: null,
-      author: { id: 'user-1', bot: false, username: 'mike', displayAvatarURL: () => 'https://cdn/u.png' },
-    });
-    expect(buildPayload(message, 'x').username).toBe('mike');
-  });
-});
 
 const PLATFORMS_ON = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
@@ -197,22 +205,6 @@ function deps(overrides = {}) {
 }
 
 describe('handleMessage', () => {
-  it('sends the rewritten message then deletes the original', async () => {
-    const order = [];
-    const send = vi.fn(async () => { order.push('send'); });
-    const message = fakeMessage({
-      member: fakeMember(),
-      delete: vi.fn(async () => { order.push('delete'); }),
-    });
-    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })), invalidate: vi.fn() } });
-
-    expect(await handleMessage(message, d)).toBe('replaced');
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ content: 'https://fxtwitter.com/jack/status/20' }),
-    );
-    expect(order).toEqual(['send', 'delete']);
-  });
-
   it('does not send or delete when the author cannot embed links', async () => {
     const member = { id: 'member-1', displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' };
     const channel = {
@@ -243,92 +235,98 @@ describe('handleMessage', () => {
     expect(d.webhooks.get).not.toHaveBeenCalled();
     expect(message.delete).not.toHaveBeenCalled();
   });
+});
 
-  it('never deletes the original when the send fails', async () => {
-    const send = vi.fn(async () => { throw new Error('boom'); });
-    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })), invalidate: vi.fn() } });
+describe('handleMessage — mode dispatch', () => {
+  const PLATFORMS_ON = {
+    twitter: { enabled: true, domain: 'fxtwitter.com' },
+    instagram: { enabled: true, domain: 'oginstagram.com' },
+    tiktok: { enabled: true, domain: 'vxtiktok.com' },
+    reddit: { enabled: true, domain: 'rxddit.com' },
+    bluesky: { enabled: true, domain: 'fxbsky.app' },
+  };
+  const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
-    expect(await handleMessage(message, d)).toBe('send-failed');
-    expect(message.delete).not.toHaveBeenCalled();
-  });
-
-  it('falls back to a plain reply when the channel is out of webhooks', async () => {
-    const error = Object.assign(new Error('max webhooks'), { code: 30007 });
-    const reply = vi.fn(async () => {});
-    const message = fakeMessage({ member: fakeMember(), reply, delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }), invalidate: vi.fn() } });
-
-    expect(await handleMessage(message, d)).toBe('fallback-reply');
-    expect(reply).toHaveBeenCalledWith(
-      expect.objectContaining({ content: 'https://fxtwitter.com/jack/status/20' }),
-    );
-    expect(message.delete).not.toHaveBeenCalled();
-  });
-
-  it('resolves to send-failed, rather than rejecting, when the fallback reply itself fails', async () => {
-    const error = Object.assign(new Error('max webhooks'), { code: 30007 });
-    const reply = vi.fn(async () => { throw new Error('reply blocked'); });
-    const message = fakeMessage({ member: fakeMember(), reply, delete: vi.fn() });
-    const d = deps({ webhooks: { get: vi.fn(async () => { throw error; }), invalidate: vi.fn() } });
-
-    await expect(handleMessage(message, d)).resolves.toBe('send-failed');
-    expect(message.delete).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['Unknown Webhook (10015)', 10015],
-    ['Invalid Webhook Token (50027)', 50027],
-  ])('invalidates and retries once on %s, then sends and deletes', async (_label, code) => {
-    // A moderator deleted the webhook from channel settings. The cached
-    // promise still resolves to the dead object, so without invalidation the
-    // channel is broken for every subsequent message until a restart.
-    const dead = { send: vi.fn(async () => { throw Object.assign(new Error('gone'), { code }); }) };
-    const order = [];
-    const fresh = { send: vi.fn(async () => { order.push('send'); }) };
-    const get = vi.fn(async () => (get.mock.calls.length === 1 ? dead : fresh));
-    const invalidate = vi.fn();
+  it('suppresses and replies in suppress mode, deleting nothing', async () => {
     const message = fakeMessage({
-      member: fakeMember(),
-      delete: vi.fn(async () => { order.push('delete'); }),
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      reply: vi.fn(async () => {}),
+      suppressEmbeds: vi.fn(async () => {}),
+      delete: vi.fn(),
+    });
+    const webhooks = { get: vi.fn() };
+
+    expect(await handleMessage(message, {
+      mode: 'suppress', platforms: PLATFORMS_ON, webhooks, logger: silentLogger,
+    })).toBe('suppressed');
+    expect(message.suppressEmbeds).toHaveBeenCalled();
+    expect(message.delete).not.toHaveBeenCalled();
+    expect(webhooks.get).not.toHaveBeenCalled();
+  });
+
+  it('reposts through a webhook in repost mode, suppressing nothing', async () => {
+    const send = vi.fn(async () => {});
+    const message = fakeMessage({
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(async () => {}),
     });
 
-    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('replaced');
-    expect(invalidate).toHaveBeenCalledWith(message.channel);
-    expect(fresh.send).toHaveBeenCalledOnce();
-    expect(order).toEqual(['send', 'delete']);
+    expect(await handleMessage(message, {
+      mode: 'repost',
+      platforms: PLATFORMS_ON,
+      webhooks: { get: vi.fn(async () => ({ send })) },
+      logger: silentLogger,
+    })).toBe('replaced');
+    expect(message.delete).toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
   });
 
-  it('never deletes the original when the retry after invalidation also fails', async () => {
-    const stale = () => Object.assign(new Error('gone'), { code: 10015 });
-    const send = vi.fn(async () => { throw stale(); });
-    const get = vi.fn(async () => ({ send }));
-    const invalidate = vi.fn();
-    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
-
-    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('send-failed');
-    expect(invalidate).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledTimes(2); // the original attempt and one retry
-    expect(message.delete).not.toHaveBeenCalled();
+  it('returns unchanged in either mode when no link matches', async () => {
+    const message = fakeMessage({ content: 'just talking', reply: vi.fn(), delete: vi.fn() });
+    expect(await handleMessage(message, {
+      mode: 'suppress', platforms: PLATFORMS_ON, webhooks: { get: vi.fn() }, logger: silentLogger,
+    })).toBe('unchanged');
+    expect(message.reply).not.toHaveBeenCalled();
   });
 
-  it('does not retry a send failure that is not a stale webhook', async () => {
-    const send = vi.fn(async () => { throw Object.assign(new Error('rate limited'), { code: 429 }); });
-    const get = vi.fn(async () => ({ send }));
-    const invalidate = vi.fn();
-    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
-
-    expect(await handleMessage(message, deps({ webhooks: { get, invalidate } }))).toBe('send-failed');
-    expect(invalidate).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledOnce();
-    expect(message.delete).not.toHaveBeenCalled();
-  });
-
-  it('reports a replacement even when the delete fails', async () => {
+  // ignoreReason's guards and the deliver dispatch both branch on the mode
+  // string independently. If they ever disagreed, an unrecognised mode could
+  // pair suppress's permissive guards with repost's irreversible delete — the
+  // one combination that can destroy a user's attachment. This pins that they
+  // agree: an unrecognised mode gets repost's guards *and* repost's delivery.
+  it('takes the repost path end to end for an unrecognised mode', async () => {
+    const send = vi.fn(async () => {});
     const message = fakeMessage({
-      member: fakeMember(),
-      delete: vi.fn(async () => { throw new Error('already gone'); }),
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(async () => {}),
     });
-    expect(await handleMessage(message, deps())).toBe('replaced');
+
+    expect(await handleMessage(message, {
+      mode: 'nonsense',
+      platforms: PLATFORMS_ON,
+      webhooks: { get: vi.fn(async () => ({ send })) },
+      logger: silentLogger,
+    })).toBe('replaced');
+    expect(send).toHaveBeenCalled();
+    expect(message.delete).toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
+  });
+
+  it('still guards an unrecognised mode against destroying an attachment', async () => {
+    const webhooks = { get: vi.fn() };
+    const message = fakeMessage({
+      attachments: { size: 1 },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(),
+    });
+
+    expect(await handleMessage(message, {
+      mode: 'nonsense', platforms: PLATFORMS_ON, webhooks, logger: silentLogger,
+    })).toBe('has-attachments');
+    expect(webhooks.get).not.toHaveBeenCalled();
+    expect(message.delete).not.toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
   });
 });

@@ -35,16 +35,23 @@ client.once(Events.ClientReady, (ready) => {
     .filter(([, s]) => s.enabled)
     .map(([name, s]) => `${name}→${s.domain}`)
     .join(', ');
-  logger.info(`Logged in as ${ready.user.tag}. Rewriting: ${enabled || 'nothing'}`);
+  logger.info(`Logged in as ${ready.user.tag} in ${config.mode} mode (from ${config.modeSource}). Rewriting: ${enabled || 'nothing'}`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
   if (!webhooks) return; // not logged in yet
   try {
-    const outcome = await handleMessage(message, { platforms: config.platforms, webhooks, logger });
+    const outcome = await handleMessage(message, {
+      mode: config.mode, platforms: config.platforms, webhooks, logger,
+    });
     if (outcome === 'missing-permissions' && !warnedChannels.has(message.channel.id)) {
       warnedChannels.add(message.channel.id);
-      logger.warn(`Missing Manage Messages / Manage Webhooks in #${message.channel.name ?? message.channel.id}; skipping this channel.`);
+      // Suppress mode never touches a webhook, so naming Manage Webhooks here
+      // would point at a permission this mode doesn't need.
+      const requiredPermissions = config.mode === 'suppress'
+        ? 'Manage Messages / Send Messages'
+        : 'Manage Messages / Manage Webhooks / Send Messages';
+      logger.warn(`Missing ${requiredPermissions} in #${message.channel.name ?? message.channel.id}; skipping this channel.`);
     }
   } catch (error) {
     // One bad message must never take the process down.

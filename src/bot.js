@@ -1,36 +1,45 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { rewrite } from './rewrite.js';
+import { deliver as repostDeliver } from './delivery/repost.js';
+import { deliver as suppressDeliver } from './delivery/suppress.js';
 
-const REQUIRED_PERMISSIONS = [
+const BASE_PERMISSIONS = [
   PermissionFlagsBits.ManageMessages,
-  PermissionFlagsBits.ManageWebhooks,
   PermissionFlagsBits.SendMessages,
 ];
+// Only repost posts through a webhook.
+const REPOST_PERMISSIONS = [...BASE_PERMISSIONS, PermissionFlagsBits.ManageWebhooks];
 
 // MessageReferenceType.Forward === 1. A forwarded message carries content we
 // cannot reproduce through a webhook, so it is left alone.
 const REFERENCE_TYPE_FORWARD = 1;
 
-export function ignoreReason(message, botUserId) {
+export function ignoreReason(message, botUserId, mode) {
   if (message.author?.bot) return 'bot';
   if (message.webhookId) return 'webhook';
   if (!message.guild) return 'not-a-guild';
   if (message.system) return 'system';
-  if (message.attachments?.size > 0) return 'has-attachments';
-  if (message.stickers?.size > 0) return 'has-stickers';
-  if (message.poll) return 'has-poll';
-  if (message.reference?.type === REFERENCE_TYPE_FORWARD) return 'forwarded';
 
+  // These four exist only to stop repost destroying content a webhook cannot
+  // reproduce. Suppress mode deletes nothing, so it handles them normally.
+  // Branch written as "not suppress" rather than "is repost" so an unrecognised
+  // mode defaults to the guarded path instead of the permissive one.
+  if (mode !== 'suppress') {
+    if (message.attachments?.size > 0) return 'has-attachments';
+    if (message.stickers?.size > 0) return 'has-stickers';
+    if (message.poll) return 'has-poll';
+    if (message.reference?.type === REFERENCE_TYPE_FORWARD) return 'forwarded';
+  }
+
+  const required = mode !== 'suppress' ? REPOST_PERMISSIONS : BASE_PERMISSIONS;
   const permissions = message.channel.permissionsFor(botUserId);
-  if (!permissions || !REQUIRED_PERMISSIONS.every((flag) => permissions.has(flag))) {
+  if (!permissions || !required.every((flag) => permissions.has(flag))) {
     return 'missing-permissions';
   }
 
-  // A webhook message is not subject to the posting member's permissions, so
-  // in a channel where the author is denied Embed Links — a common anti-scam
-  // setting, and the exact permission this bot exists to exercise — reposting
-  // would do for them something the server has explicitly denied them. Fail
-  // closed: the server's moderation intent wins over the embed.
+  // Suppress mode still posts an embed on the author's behalf, so even though
+  // it does not use a webhook, a server that denied this user Embed Links is
+  // still being overridden. This check applies to both modes: it is not mode-gated.
   const authorPermissions = message.channel.permissionsFor(message.member ?? message.author);
   if (!authorPermissions || !authorPermissions.has(PermissionFlagsBits.EmbedLinks)) {
     return 'author-cannot-embed';
@@ -38,94 +47,13 @@ export function ignoreReason(message, botUserId) {
   return null;
 }
 
-export function buildPayload(message, content) {
-  const isReply = message.reference?.type !== REFERENCE_TYPE_FORWARD && message.reference?.messageId;
-  const repliedTo = message.mentions?.repliedUser?.id;
-  // A webhook cannot carry a reply reference, so the link becomes a subtext line.
-  // If the replied-to user isn't resolvable (they left, or the message is
-  // uncached), the subtext line is silently dropped rather than abandoning
-  // the rewrite — this is intended graceful degradation, not a bug.
-  const body = isReply && repliedTo ? `-# ↪ replying to <@${repliedTo}>\n${content}` : content;
-
-  const payload = {
-    content: body,
-    username: message.member?.displayName ?? message.author.username,
-    avatarURL: message.member?.displayAvatarURL() ?? message.author.displayAvatarURL(),
-    // Mentions still render, but nobody the original already pinged gets a
-    // second notification.
-    allowedMentions: { parse: [] },
-  };
-  if (message.channel.isThread?.()) payload.threadId = message.channel.id;
-  return payload;
-}
-
-// Discord API error: the channel already has the maximum 15 webhooks.
-const ERROR_MAX_WEBHOOKS = 30007;
-
-// Discord API errors meaning the cached webhook no longer exists — a moderator
-// deleted it from channel settings, or its token was regenerated. The cache
-// holds a resolved promise, so without invalidation the channel stays broken
-// for every subsequent message until the process restarts.
-const STALE_WEBHOOK_ERRORS = new Set([
-  10015, // Unknown Webhook
-  50027, // Invalid Webhook Token
-]);
-
-export async function handleMessage(message, { platforms, webhooks, logger }) {
-  const reason = ignoreReason(message, message.client?.user?.id);
+export async function handleMessage(message, { mode, platforms, webhooks, logger }) {
+  const reason = ignoreReason(message, message.client?.user?.id, mode);
   if (reason) return reason;
 
   const { changed, content } = rewrite(message.content, platforms);
   if (!changed) return 'unchanged';
 
-  const payload = buildPayload(message, content);
-
-  let webhook;
-  try {
-    webhook = await webhooks.get(message.channel);
-  } catch (error) {
-    if (error.code === ERROR_MAX_WEBHOOKS) {
-      // Channel is out of webhook slots: post the fixed link plainly and
-      // leave the original in place rather than destroying it.
-      try {
-        await message.reply({ content, allowedMentions: { parse: [] } });
-      } catch (replyError) {
-        logger.error(`fallback reply failed in ${message.channel.id}: ${replyError.message}`);
-        return 'send-failed';
-      }
-      return 'fallback-reply';
-    }
-    logger.error(`webhook lookup failed in ${message.channel.id}: ${error.message}`);
-    return 'send-failed';
-  }
-
-  try {
-    await webhook.send(payload);
-  } catch (error) {
-    if (!STALE_WEBHOOK_ERRORS.has(error.code)) {
-      logger.error(`webhook send failed in ${message.channel.id}: ${error.message}`);
-      return 'send-failed';
-    }
-    // The cached webhook is gone. Drop it, rebuild, and try exactly once more.
-    webhooks.invalidate(message.channel);
-    try {
-      const fresh = await webhooks.get(message.channel);
-      await fresh.send(payload);
-    } catch (retryError) {
-      logger.error(`webhook send retry failed in ${message.channel.id}: ${retryError.message}`);
-      return 'send-failed';
-    }
-  }
-
-  // Reachable only once a webhook.send() above has resolved: every failing
-  // path returns before here. This is the sole message.delete() call site,
-  // and it must stay that way — the delete is irreversible.
-  try {
-    await message.delete();
-  } catch (error) {
-    // The replacement is already posted; a failed delete leaves a duplicate,
-    // which is noisy but not destructive.
-    logger.warn(`could not delete ${message.id}: ${error.message}`);
-  }
-  return 'replaced';
+  const deliver = mode === 'suppress' ? suppressDeliver : repostDeliver;
+  return deliver(message, content, { webhooks, logger });
 }

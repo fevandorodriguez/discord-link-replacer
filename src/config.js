@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { PLATFORMS, DEFAULT_DOMAINS } from './rules.js';
 
+export const MODES = ['repost', 'suppress'];
+const DEFAULT_MODE = 'repost';
+
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
 export function loadConfig({ file = 'config.json', env = process.env } = {}) {
@@ -22,6 +25,7 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   for (const key of Object.keys(raw)) {
+    if (key === 'mode') continue;
     if (!PLATFORMS.includes(key)) {
       throw new Error(`Unknown platform "${key}" in ${file}. Known platforms: ${PLATFORMS.join(', ')}.`);
     }
@@ -44,7 +48,9 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
     platforms[platform] = { enabled, domain };
   }
 
-  return { token, platforms };
+  const { mode, modeSource } = resolveMode(raw.mode, env, file);
+
+  return { token, mode, modeSource, platforms };
 }
 
 function envDomain(env, platform) {
@@ -61,4 +67,28 @@ function envEnabled(env, platform) {
   if (normalised === 'true') return true;
   if (normalised === 'false') return false;
   throw new Error(`Invalid ${name}: expected "true" or "false", got "${value}".`);
+}
+
+// The delivery mode: repost (delete and repost) or suppress (leave and reply).
+// Env var beats file beats default. Case-folding is silent, but whitespace is not:
+// a stray space fails loudly rather than being silently stripped.
+// Returns modeSource alongside mode so callers (the ready-log line) can tell an
+// operator *where* the active mode came from — the env var always wins over
+// config.json, silently, so that's the one fact worth surfacing at boot.
+function resolveMode(fromFile, env, file) {
+  if (env.LINKFIX_MODE !== undefined) {
+    const mode = String(env.LINKFIX_MODE).toLowerCase();
+    if (!MODES.includes(mode)) {
+      throw new Error(`Invalid LINKFIX_MODE: expected one of ${MODES.join(', ')}, got "${env.LINKFIX_MODE}".`);
+    }
+    return { mode, modeSource: 'LINKFIX_MODE' };
+  }
+  if (fromFile !== undefined) {
+    const mode = String(fromFile).toLowerCase();
+    if (!MODES.includes(mode)) {
+      throw new Error(`Invalid mode "${fromFile}" in ${file}; expected one of ${MODES.join(', ')}.`);
+    }
+    return { mode, modeSource: 'config.json' };
+  }
+  return { mode: DEFAULT_MODE, modeSource: 'default' };
 }
