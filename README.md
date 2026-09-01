@@ -71,12 +71,17 @@ guess:
 
 | Mirror | Behaviour |
 |---|---|
-| `instagirlcock.com` | In use. Sets `og:url` to the original post, so the embed title links back to Instagram. Full attribution and caption. |
-| `toinstagram.com` | Redirects people to instagram.com correctly, but served a *relative* `og:video` on a photo post, which embeds badly. |
+| `uuinstagram.com` | In use. Sets `og:url` to the original post, so the embed title links back to Instagram. Album index via path. Serves a *relative* `og:video` URL, which may embed less reliably than an absolute one. |
+| `toinstagram.com` | Same InstaFix family as `uuinstagram`, with the same relative `og:video`. The natural fallback. |
+| `instagirlcock.com` | Also sets `og:url`, with an absolute `og:image`, full attribution and the caption. Functionally the strongest tested; the domain name is the problem. |
 | `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
-| `kkinstagram.com` | Serves no OpenGraph tags at all and sends people to `kkclip.com`. Was the default until this commit. |
+| `kkinstagram.com` | Serves no OpenGraph tags at all and sends people to `kkclip.com`. |
 | `ddinstagram.com`, `fxinstagram.com` | Dead — no DNS record and a parked IP respectively. |
 | `instagramez.com` | **Avoid.** Redirects through an advertising network. |
+
+`/share/` links could not be verified against any mirror: a made-up share
+code returns 404 everywhere, so testing needs a real one. If share links
+stop embedding after a mirror swap, that is the first thing to check.
 
 No mirror restores likes or view counts on the original post; engagement
 needs an authenticated action on Instagram's own clients, so any embed

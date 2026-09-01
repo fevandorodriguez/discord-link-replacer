@@ -57,7 +57,7 @@ describe('rewrite — every platform', () => {
   it.each([
     ['https://x.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
     ['https://twitter.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
-    ['https://www.instagram.com/reel/Cabc123/', 'https://instagirlcock.com/reel/Cabc123/'],
+    ['https://www.instagram.com/reel/Cabc123/', 'https://uuinstagram.com/reel/Cabc123/'],
     ['https://www.tiktok.com/@someone/video/7123456789', 'https://vxtiktok.com/@someone/video/7123456789'],
     ['https://vm.tiktok.com/ZMabc123/', 'https://vxtiktok.com/ZMabc123/'],
     ['https://www.reddit.com/r/videos/comments/abc123/title/', 'https://rxddit.com/r/videos/comments/abc123/title/'],
@@ -111,8 +111,8 @@ describe('rewrite — skip conditions', () => {
   });
 
   it('skips a link on a disabled platform target domain', () => {
-    const off = { ...ALL_ON, instagram: { enabled: false, domain: 'instagirlcock.com' } };
-    expect(rewrite('https://instagirlcock.com/reel/Cabc123/', off).changed).toBe(false);
+    const off = { ...ALL_ON, instagram: { enabled: false, domain: 'uuinstagram.com' } };
+    expect(rewrite('https://uuinstagram.com/reel/Cabc123/', off).changed).toBe(false);
   });
 
   it('rewrites a URL immediately followed by inline code with no whitespace', () => {
@@ -136,7 +136,7 @@ describe('rewrite — parameters and punctuation', () => {
 
   it('strips instagram and utm tracking parameters', () => {
     expect(rewrite('https://www.instagram.com/reel/Cabc123/?igsh=xyz&utm_source=ig', ALL_ON).content)
-      .toBe('https://instagirlcock.com/reel/Cabc123/');
+      .toBe('https://uuinstagram.com/reel/Cabc123/');
   });
 
   it('keeps parameters that are not tracking', () => {
@@ -172,7 +172,7 @@ describe('rewrite — parameters and punctuation', () => {
 // original — destroys it irrecoverably.
 describe('rewrite — adjacent text is never re-encoded', () => {
   it.each([
-    ['emoji', 'https://www.instagram.com/reel/Cabc123/🔥🔥', 'https://instagirlcock.com/reel/Cabc123/🔥🔥'],
+    ['emoji', 'https://www.instagram.com/reel/Cabc123/🔥🔥', 'https://uuinstagram.com/reel/Cabc123/🔥🔥'],
     ['CJK', 'https://x.com/jack/status/20これはひどい', 'https://fxtwitter.com/jack/status/20これはひどい'],
     ['a smart apostrophe', 'https://x.com/jack/status/20’s wild', 'https://fxtwitter.com/jack/status/20’s wild'],
     ['Cyrillic', 'https://x.com/jack/status/20ну и ну', 'https://fxtwitter.com/jack/status/20ну и ну'],
@@ -198,40 +198,40 @@ describe('rewrite — instagram album index', () => {
   // share from the first slide, so it means "whole album", not "item one".
   it('moves the album index into the path', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=3', ALL_ON).content)
-      .toBe('https://instagirlcock.com/p/DcwKEouiDPn/3/');
+      .toBe('https://uuinstagram.com/p/DcwKEouiDPn/3/');
   });
 
   it('drops index 1 so a first-slide share stays a whole album', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=1', ALL_ON).content)
-      .toBe('https://instagirlcock.com/p/DcwKEouiDPn/');
+      .toBe('https://uuinstagram.com/p/DcwKEouiDPn/');
   });
 
   it('leaves a post with no album index alone', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/', ALL_ON).content)
-      .toBe('https://instagirlcock.com/p/DcwKEouiDPn/');
+      .toBe('https://uuinstagram.com/p/DcwKEouiDPn/');
   });
 
   it('adds the separating slash when the path has none', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn?img_index=2', ALL_ON).content)
-      .toBe('https://instagirlcock.com/p/DcwKEouiDPn/2/');
+      .toBe('https://uuinstagram.com/p/DcwKEouiDPn/2/');
   });
 
   it('keeps other query parameters alongside the moved index', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=2&lang=en', ALL_ON).content)
-      .toBe('https://instagirlcock.com/p/DcwKEouiDPn/2/?lang=en');
+      .toBe('https://uuinstagram.com/p/DcwKEouiDPn/2/?lang=en');
   });
 
   it.each(['abc', '0', '-2', '1.5', ''])(
     'drops a nonsensical index (%s) rather than building a broken path',
     (value) => {
       expect(rewrite(`https://www.instagram.com/p/DcwKEouiDPn/?img_index=${value}`, ALL_ON).content)
-        .toBe('https://instagirlcock.com/p/DcwKEouiDPn/');
+        .toBe('https://uuinstagram.com/p/DcwKEouiDPn/');
     },
   );
 
   it('ignores an album index on a reel, which has no album', () => {
     expect(rewrite('https://www.instagram.com/reel/Cabc123/?img_index=2', ALL_ON).content)
-      .toBe('https://instagirlcock.com/reel/Cabc123/');
+      .toBe('https://uuinstagram.com/reel/Cabc123/');
   });
 
   it('does not touch an img_index on another platform', () => {
@@ -245,18 +245,18 @@ describe('rewrite — instagram URL forms beyond /p/ and /reel/', () => {
   // also accept stories and username-prefixed post URLs. All are plain host
   // swaps; only the path matching needed widening.
   it.each([
-    ['share link', 'https://www.instagram.com/share/BAbCdEfGh1/', 'https://instagirlcock.com/share/BAbCdEfGh1/'],
-    ['story', 'https://www.instagram.com/stories/someuser/3512345678901234567/', 'https://instagirlcock.com/stories/someuser/3512345678901234567/'],
-    ['user post', 'https://www.instagram.com/someuser/p/DcwKEouiDPn/', 'https://instagirlcock.com/someuser/p/DcwKEouiDPn/'],
-    ['user reel', 'https://www.instagram.com/someuser/reel/DcwKEouiDPn/', 'https://instagirlcock.com/someuser/reel/DcwKEouiDPn/'],
-    ['username with a dot', 'https://www.instagram.com/some.user/p/DcwKEouiDPn/', 'https://instagirlcock.com/some.user/p/DcwKEouiDPn/'],
+    ['share link', 'https://www.instagram.com/share/BAbCdEfGh1/', 'https://uuinstagram.com/share/BAbCdEfGh1/'],
+    ['story', 'https://www.instagram.com/stories/someuser/3512345678901234567/', 'https://uuinstagram.com/stories/someuser/3512345678901234567/'],
+    ['user post', 'https://www.instagram.com/someuser/p/DcwKEouiDPn/', 'https://uuinstagram.com/someuser/p/DcwKEouiDPn/'],
+    ['user reel', 'https://www.instagram.com/someuser/reel/DcwKEouiDPn/', 'https://uuinstagram.com/someuser/reel/DcwKEouiDPn/'],
+    ['username with a dot', 'https://www.instagram.com/some.user/p/DcwKEouiDPn/', 'https://uuinstagram.com/some.user/p/DcwKEouiDPn/'],
   ])('rewrites a %s', (_label, input, expected) => {
     expect(rewrite(input, ALL_ON).content).toBe(expected);
   });
 
   it('moves the album index on a username-prefixed post too', () => {
     expect(rewrite('https://www.instagram.com/someuser/p/DcwKEouiDPn/?img_index=2', ALL_ON).content)
-      .toBe('https://instagirlcock.com/someuser/p/DcwKEouiDPn/2/');
+      .toBe('https://uuinstagram.com/someuser/p/DcwKEouiDPn/2/');
   });
 
   it.each([

@@ -9,7 +9,7 @@ describe('rule table', () => {
   it('exposes a default domain for every platform', () => {
     expect(DEFAULT_DOMAINS).toEqual({
       twitter: 'fxtwitter.com',
-      instagram: 'instagirlcock.com',
+      instagram: 'uuinstagram.com',
       tiktok: 'vxtiktok.com',
       reddit: 'rxddit.com',
       bluesky: 'fxbsky.app',
