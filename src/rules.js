@@ -2,7 +2,7 @@ export const PLATFORMS = ['twitter', 'instagram', 'tiktok', 'reddit', 'bluesky']
 
 export const DEFAULT_DOMAINS = {
   twitter: 'fxtwitter.com',
-  instagram: 'kkinstagram.com',
+  instagram: 'instagirlcock.com',
   tiktok: 'vxtiktok.com',
   reddit: 'rxddit.com',
   bluesky: 'fxbsky.app',

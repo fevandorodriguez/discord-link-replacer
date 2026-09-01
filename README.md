@@ -2,7 +2,7 @@
 
 A Discord bot that rewrites links to X/Twitter, Instagram, TikTok, Reddit
 and Bluesky into mirror-domain equivalents (`fxtwitter.com`,
-`kkinstagram.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
+`instagirlcock.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
 working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
@@ -44,7 +44,7 @@ Per-platform settings live in `config.json`:
 | Platform | Enabled | Default domain |
 |---|---|---|
 | twitter | true | `fxtwitter.com` |
-| instagram | true | `kkinstagram.com` |
+| instagram | true | `instagirlcock.com` |
 | tiktok | true | `vxtiktok.com` |
 | reddit | true | `rxddit.com` |
 | bluesky | true | `fxbsky.app` |
@@ -54,7 +54,7 @@ file, using `LINKFIX_<PLATFORM>_DOMAIN` and `LINKFIX_<PLATFORM>_ENABLED`
 (platform name upper-cased), for example:
 
 ```
-LINKFIX_INSTAGRAM_DOMAIN=ddinstagram.com
+LINKFIX_INSTAGRAM_DOMAIN=toinstagram.com
 LINKFIX_TIKTOK_ENABLED=false
 ```
 
@@ -65,6 +65,22 @@ else is a startup error rather than a silent guess.
 These mirror domains are volunteer-run, third-party infrastructure — they
 go down or change hands periodically. When one does, swap it with an
 env override (or edit `config.json`) and restart; no code change needed.
+
+Instagram mirrors tested 2026-09-01, so a swap is a choice rather than a
+guess:
+
+| Mirror | Behaviour |
+|---|---|
+| `instagirlcock.com` | In use. Sets `og:url` to the original post, so the embed title links back to Instagram. Full attribution and caption. |
+| `toinstagram.com` | Redirects people to instagram.com correctly, but served a *relative* `og:video` on a photo post, which embeds badly. |
+| `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
+| `kkinstagram.com` | Serves no OpenGraph tags at all and sends people to `kkclip.com`. Was the default until this commit. |
+| `ddinstagram.com`, `fxinstagram.com` | Dead — no DNS record and a parked IP respectively. |
+| `instagramez.com` | **Avoid.** Redirects through an advertising network. |
+
+No mirror restores likes or view counts on the original post; engagement
+needs an authenticated action on Instagram's own clients, so any embed
+fixer is a dead end for that by construction.
 
 Under Docker Compose, `config.json` is bind-mounted read-only from the
 project directory, so editing it and running `docker compose restart`

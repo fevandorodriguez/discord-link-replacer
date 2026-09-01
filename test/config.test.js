@@ -9,7 +9,7 @@ let file;
 
 const VALID = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
-  instagram: { enabled: true, domain: 'kkinstagram.com' },
+  instagram: { enabled: true, domain: 'instagirlcock.com' },
   tiktok: { enabled: true, domain: 'vxtiktok.com' },
   reddit: { enabled: true, domain: 'rxddit.com' },
   bluesky: { enabled: true, domain: 'fxbsky.app' },
@@ -50,9 +50,9 @@ describe('loadConfig', () => {
     write(VALID);
     const config = loadConfig({
       file,
-      env: { DISCORD_TOKEN: 'abc', LINKFIX_INSTAGRAM_DOMAIN: 'ddinstagram.com' },
+      env: { DISCORD_TOKEN: 'abc', LINKFIX_INSTAGRAM_DOMAIN: 'toinstagram.com' },
     });
-    expect(config.platforms.instagram.domain).toBe('ddinstagram.com');
+    expect(config.platforms.instagram.domain).toBe('toinstagram.com');
   });
 
   it('lets an env var disable a platform', () => {
