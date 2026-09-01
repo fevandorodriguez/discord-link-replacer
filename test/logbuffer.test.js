@@ -68,7 +68,7 @@ describe('createLogBuffer', () => {
     buffer.record('info', { originalContent: 'secret', channelId: 'C1' });
     const entries = buffer.entries();
     expect(entries[0].text).not.toContain('secret');
-    expect(entries[0].text).toBe('[object Object]');
+    expect(entries[0].text).toBe('[non-string log value]');
   });
 
   it('returns deep copies so mutating an entry does not corrupt the buffer', () => {
@@ -113,5 +113,58 @@ describe('createLogBuffer', () => {
     const bufferString = createLogBuffer('abc');
     for (let i = 0; i < 250; i++) bufferString.record('info', `item${i}`);
     expect(bufferString.entries()).toHaveLength(200);
+  });
+
+  it('blocks arrays from leaking content via Array.toString', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', ['secret message here', 'https://evil']);
+    const text = buffer.entries()[0].text;
+    expect(text).not.toContain('secret message here');
+    expect(text).not.toContain('https://evil');
+    expect(text).toBe('[non-string log value]');
+  });
+
+  it('blocks objects with custom toString from leaking content', () => {
+    const buffer = createLogBuffer();
+    const malicious = {
+      toString() {
+        return 'secret via toString https://evil';
+      },
+    };
+    buffer.record('info', malicious);
+    const text = buffer.entries()[0].text;
+    expect(text).not.toContain('secret');
+    expect(text).not.toContain('https://evil');
+    expect(text).toBe('[non-string log value]');
+  });
+
+  it('still blocks plain objects even though they collapse to [object Object]', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', { originalContent: 'secret', channelId: 'C1' });
+    const text = buffer.entries()[0].text;
+    expect(text).not.toContain('secret');
+    expect(text).toBe('[non-string log value]');
+  });
+
+  it('allows numbers and booleans through, as they cannot carry message content', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', 42);
+    buffer.record('info', true);
+    buffer.record('info', false);
+    const entries = buffer.entries();
+    expect(entries[0].text).toBe('42');
+    expect(entries[1].text).toBe('true');
+    expect(entries[2].text).toBe('false');
+  });
+
+  it('replaces null and undefined with the placeholder, not string mangling', () => {
+    const buffer = createLogBuffer();
+    buffer.record('info', null);
+    buffer.record('info', undefined);
+    const entries = buffer.entries();
+    expect(entries[0].text).toBe('[non-string log value]');
+    expect(entries[0].text).not.toBe('null');
+    expect(entries[1].text).toBe('[non-string log value]');
+    expect(entries[1].text).not.toBe('undefined');
   });
 });
