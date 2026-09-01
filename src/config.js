@@ -69,11 +69,23 @@ function envEnabled(env, platform) {
   throw new Error(`Invalid ${name}: expected "true" or "false", got "${value}".`);
 }
 
+// The delivery mode: repost (delete and repost) or suppress (leave and reply).
+// Env var beats file beats default. Case-folding is silent, but whitespace is not:
+// a stray space fails loudly rather than being silently stripped.
 function resolveMode(fromFile, env, file) {
-  const raw = env.LINKFIX_MODE ?? fromFile ?? DEFAULT_MODE;
-  const mode = String(raw).toLowerCase();
-  if (!MODES.includes(mode)) {
-    throw new Error(`Invalid mode "${raw}" in ${file}; expected one of ${MODES.join(', ')}.`);
+  if (env.LINKFIX_MODE !== undefined) {
+    const mode = String(env.LINKFIX_MODE).toLowerCase();
+    if (!MODES.includes(mode)) {
+      throw new Error(`Invalid LINKFIX_MODE: expected one of ${MODES.join(', ')}, got "${env.LINKFIX_MODE}".`);
+    }
+    return mode;
   }
-  return mode;
+  if (fromFile !== undefined) {
+    const mode = String(fromFile).toLowerCase();
+    if (!MODES.includes(mode)) {
+      throw new Error(`Invalid mode "${fromFile}" in ${file}; expected one of ${MODES.join(', ')}.`);
+    }
+    return mode;
+  }
+  return DEFAULT_MODE;
 }

@@ -172,4 +172,18 @@ describe('loadConfig — mode', () => {
     write({ ...VALID, mode: 'suppress' });
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).not.toThrow();
   });
+
+  it('throws on invalid LINKFIX_MODE, naming the env var not the config file', () => {
+    write({ ...VALID, mode: 'repost' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'banana' } }))
+      .toThrow(/LINKFIX_MODE/);
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'banana' } }))
+      .not.toThrow(new RegExp(file));
+  });
+
+  it('lets a valid LINKFIX_MODE override a valid file value', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'suppress' } });
+    expect(config.mode).toBe('suppress');
+  });
 });
