@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createModeStore } from '../../src/admin/mode-store.js';
@@ -68,5 +68,58 @@ describe('createModeStore', () => {
     expect(store.locked()).toBe(false);
     store.set('suppress');
     expect(JSON.parse(readFileSync(file, 'utf8')).mode).toBe('suppress');
+  });
+
+  it('rejects an array root and leaves the file alone', () => {
+    writeFileSync(file, JSON.stringify(['repost']));
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+    expect(() => store.set('suppress')).toThrow(/must be a JSON object/);
+    expect(store.current()).toBe('repost');
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(['repost']);
+  });
+
+  it('rejects a null root and leaves the file alone', () => {
+    writeFileSync(file, 'null');
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+    expect(() => store.set('suppress')).toThrow(/must be a JSON object/);
+    expect(store.current()).toBe('repost');
+    expect(readFileSync(file, 'utf8')).toBe('null');
+  });
+
+  it('rejects a primitive root and leaves the file alone', () => {
+    writeFileSync(file, '42');
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+    expect(() => store.set('suppress')).toThrow(/must be a JSON object/);
+    expect(store.current()).toBe('repost');
+    expect(readFileSync(file, 'utf8')).toBe('42');
+  });
+
+  it('tags validation rejections with error.code = "MODE_REJECTED"', () => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+
+    try {
+      store.set('invalid');
+    } catch (e) {
+      expect(e.code).toBe('MODE_REJECTED');
+    }
+  });
+
+  it('does not tag I/O errors with MODE_REJECTED', () => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file: '/nonexistent/path/config.json' });
+
+    try {
+      store.set('suppress');
+    } catch (e) {
+      expect(e.code).not.toBe('MODE_REJECTED');
+    }
+  });
+
+  it('cleans up temp file on successful write and leaves no stray files', () => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+    store.set('suppress');
+
+    expect(JSON.parse(readFileSync(file, 'utf8')).mode).toBe('suppress');
+    const tempFile = `${file}.tmp`;
+    expect(existsSync(tempFile)).toBe(false);
   });
 });
