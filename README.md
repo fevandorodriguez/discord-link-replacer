@@ -2,7 +2,7 @@
 
 A Discord bot that rewrites links to X/Twitter, Instagram, TikTok, Reddit
 and Bluesky into mirror-domain equivalents (`fxtwitter.com`,
-`instagirlcock.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
+`oginstagram.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
 working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
@@ -46,7 +46,7 @@ Per-platform settings live in `config.json`:
 | Platform | Enabled | Default domain |
 |---|---|---|
 | twitter | true | `fxtwitter.com` |
-| instagram | true | `instagirlcock.com` |
+| instagram | true | `oginstagram.com` |
 | tiktok | true | `vxtiktok.com` |
 | reddit | true | `rxddit.com` |
 | bluesky | true | `fxbsky.app` |
@@ -106,13 +106,25 @@ LINKFIX_MODE=repost   # default
 LINKFIX_MODE=suppress
 ```
 
+`LINKFIX_MODE` always wins over `config.json`: if it is set at all, `mode`
+in `config.json` is not consulted, full stop. So if you enabled suppress
+mode via the env var, you must revert it via the env var too — editing
+`mode` in `config.json` and restarting will do nothing, silently. The
+ready-log line on startup (`Logged in as ... in <mode> mode (from ...)`)
+names which of the two actually won, so it's the first thing to check if
+a mode change doesn't seem to have taken effect.
+
 - **`repost`** (default) — today's behaviour, described above: delete the
   original message and repost the fixed link through a channel webhook
   wearing the author's name and avatar. The channel ends up with exactly
   one message.
 - **`suppress`** — leave the original message exactly as the author wrote
   it, reply to it with the fixed link, then strip the embed from the
-  original. Nothing is deleted.
+  original. Nothing is deleted. Because nothing is deleted or reposted
+  through a webhook, this is also the only mode that handles messages
+  with attachments, stickers, a poll, or a forwarded-message reference —
+  repost mode skips those entirely (see Behaviour and limits below). That
+  is the main reason to choose suppress over repost.
 
 Repost is the default because it's the behaviour this bot has always had.
 Suppress mode exists as a lower-privilege, non-destructive alternative for
@@ -162,15 +174,33 @@ Developer Portal — makes the process print a readable error and exit 1
 rather than starting up broken or crash-looping silently.
 
 Compose mounts `./config.json` into the container read-only, so a
-configuration change needs only `docker compose restart`; a code change
-needs `docker compose up -d --build`.
+`config.json` change (mirror domains, per-platform enable/disable, `mode`
+when it's not overridden by `LINKFIX_MODE`) needs only
+`docker compose restart` — that rereads the file, no rebuild.
+
+An `.env` change — **including `LINKFIX_MODE`** — is different: `restart`
+stops and starts the *existing* container, and environment loaded via
+`env_file` is baked in at container-create time, so `restart` will not
+pick it up. Use `docker compose up -d` instead, which recreates the
+container with the new environment. This is the command the Delivery
+modes rollback path above depends on.
+
+A code change needs `docker compose up -d --build`, to also rebuild the
+image.
+
+If `docker compose up -d` ever reports the container as already up to
+date and you're not seeing the change, add `--force-recreate` to force
+it: `docker compose up -d --force-recreate`.
 
 ## Behaviour and limits
 
-- Messages with **attachments, stickers, a poll, or a forwarded-message
-  reference are left alone** — a webhook repost can't faithfully
-  reproduce them, and deleting the original would destroy content that
-  can't be recreated.
+- **In repost mode**, messages with **attachments, stickers, a poll, or a
+  forwarded-message reference are left alone** — a webhook repost can't
+  faithfully reproduce them, and deleting the original would destroy
+  content that can't be recreated. **Suppress mode has none of this
+  limitation**: since it deletes nothing and never posts through a
+  webhook, it handles all four kinds of message normally. See Delivery
+  modes above.
 - **If the author is denied Embed Links in that channel, the message is
   left alone.** Webhook messages aren't subject to the posting member's
   permissions, so reposting would embed a link the server has explicitly

@@ -289,4 +289,44 @@ describe('handleMessage — mode dispatch', () => {
     })).toBe('unchanged');
     expect(message.reply).not.toHaveBeenCalled();
   });
+
+  // ignoreReason's guards and the deliver dispatch both branch on the mode
+  // string independently. If they ever disagreed, an unrecognised mode could
+  // pair suppress's permissive guards with repost's irreversible delete — the
+  // one combination that can destroy a user's attachment. This pins that they
+  // agree: an unrecognised mode gets repost's guards *and* repost's delivery.
+  it('takes the repost path end to end for an unrecognised mode', async () => {
+    const send = vi.fn(async () => {});
+    const message = fakeMessage({
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(async () => {}),
+    });
+
+    expect(await handleMessage(message, {
+      mode: 'nonsense',
+      platforms: PLATFORMS_ON,
+      webhooks: { get: vi.fn(async () => ({ send })) },
+      logger: silentLogger,
+    })).toBe('replaced');
+    expect(send).toHaveBeenCalled();
+    expect(message.delete).toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
+  });
+
+  it('still guards an unrecognised mode against destroying an attachment', async () => {
+    const webhooks = { get: vi.fn() };
+    const message = fakeMessage({
+      attachments: { size: 1 },
+      suppressEmbeds: vi.fn(),
+      delete: vi.fn(),
+    });
+
+    expect(await handleMessage(message, {
+      mode: 'nonsense', platforms: PLATFORMS_ON, webhooks, logger: silentLogger,
+    })).toBe('has-attachments');
+    expect(webhooks.get).not.toHaveBeenCalled();
+    expect(message.delete).not.toHaveBeenCalled();
+    expect(message.suppressEmbeds).not.toHaveBeenCalled();
+  });
 });

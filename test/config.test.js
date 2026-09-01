@@ -187,3 +187,30 @@ describe('loadConfig — mode', () => {
     expect(config.mode).toBe('suppress');
   });
 });
+
+describe('loadConfig — modeSource', () => {
+  // LINKFIX_MODE silently overrides mode in config.json, so an operator
+  // troubleshooting a stuck mode needs the ready log to name which of the two
+  // actually won. modeSource is how loadConfig reports that.
+
+  it('reports "LINKFIX_MODE" when the env var set the mode', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'suppress' } });
+    expect(config.mode).toBe('suppress');
+    expect(config.modeSource).toBe('LINKFIX_MODE');
+  });
+
+  it('reports "config.json" when the file set the mode', () => {
+    write({ ...VALID, mode: 'suppress' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.mode).toBe('suppress');
+    expect(config.modeSource).toBe('config.json');
+  });
+
+  it('reports "default" when neither the env var nor the file set the mode', () => {
+    write(VALID);
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.mode).toBe('repost');
+    expect(config.modeSource).toBe('default');
+  });
+});

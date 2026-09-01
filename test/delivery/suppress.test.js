@@ -24,6 +24,10 @@ describe('suppress delivery', () => {
     expect(await deliver(message, 'https://fxtwitter.com/a/status/1', { logger: silentLogger }))
       .toBe('suppressed');
     expect(order).toEqual(['reply', 'suppress']);
+    // suppress = true is discord.js's default, so a bare suppressEmbeds()
+    // call would also pass — but a regression to suppressEmbeds(false), which
+    // would *un-suppress* the original, must not pass silently.
+    expect(message.suppressEmbeds).toHaveBeenCalledWith(true);
   });
 
   it('does not re-ping anyone, including the author', async () => {
@@ -35,17 +39,23 @@ describe('suppress delivery', () => {
     });
   });
 
-  it('never suppresses when the reply fails', async () => {
+  it('never suppresses when the reply fails, and logs the failure', async () => {
     const message = fakeMessage({ reply: vi.fn(async () => { throw new Error('boom'); }) });
-    expect(await deliver(message, 'x', { logger: silentLogger })).toBe('send-failed');
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    expect(await deliver(message, 'x', { logger })).toBe('send-failed');
     expect(message.suppressEmbeds).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.error.mock.calls[0][0]).toMatch(/boom/);
   });
 
-  it('still reports success when only the suppression fails', async () => {
+  it('still reports success when only the suppression fails, and logs a warning', async () => {
     const message = fakeMessage({
       suppressEmbeds: vi.fn(async () => { throw new Error('no permission'); }),
     });
-    expect(await deliver(message, 'x', { logger: silentLogger })).toBe('suppressed');
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    expect(await deliver(message, 'x', { logger })).toBe('suppressed');
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toMatch(/no permission/);
   });
 
   it('never deletes the original', async () => {
