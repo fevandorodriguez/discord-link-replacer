@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, unlinkSync, statSync, chmodSync } from 'node:fs';
 import { MODES } from '../config.js';
 
 // Holds the live delivery mode. The bot reads current() per message, so a change
@@ -53,12 +53,22 @@ export function createModeStore({ mode, modeSource, file }) {
 
       // Atomic write: write to temp file, then rename. Protects against
       // corruption if the process crashes mid-write.
+      // Preserve the target's file mode if it exists; a first-ever write
+      // lands under the default umask, which is the intended behavior.
       const tempFile = `${file}.tmp`;
       try {
         writeFileSync(tempFile, `${JSON.stringify(raw, null, 2)}\n`);
+        // Stat the target to preserve its mode. If the target doesn't exist,
+        // stat throws and we skip the chmod (first-ever write uses default umask).
+        try {
+          const stat = statSync(file);
+          chmodSync(tempFile, stat.mode);
+        } catch {
+          // Target doesn't exist yet; temp file uses default umask
+        }
         renameSync(tempFile, file);
       } catch (e) {
-        // Clean up temp file if rename failed
+        // Clean up temp file if anything failed
         try {
           unlinkSync(tempFile);
         } catch {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createModeStore } from '../../src/admin/mode-store.js';
@@ -95,8 +95,8 @@ describe('createModeStore', () => {
   });
 
   it('tags validation rejections with error.code = "MODE_REJECTED"', () => {
+    expect.assertions(1);
     const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
-
     try {
       store.set('invalid');
     } catch (e) {
@@ -105,8 +105,8 @@ describe('createModeStore', () => {
   });
 
   it('does not tag I/O errors with MODE_REJECTED', () => {
+    expect.assertions(1);
     const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file: '/nonexistent/path/config.json' });
-
     try {
       store.set('suppress');
     } catch (e) {
@@ -121,5 +121,20 @@ describe('createModeStore', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).mode).toBe('suppress');
     const tempFile = `${file}.tmp`;
     expect(existsSync(tempFile)).toBe(false);
+  });
+
+  it('preserves non-default file mode across a set() write', () => {
+    const store = createModeStore({ mode: 'repost', modeSource: 'config.json', file });
+
+    // Set a non-default mode (0600 = rw-------)
+    chmodSync(file, 0o600);
+    const beforeMode = statSync(file).mode & 0o777;
+
+    store.set('suppress');
+
+    const afterMode = statSync(file).mode & 0o777;
+    expect(beforeMode).toBe(0o600);
+    expect(afterMode).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, 'utf8')).mode).toBe('suppress');
   });
 });
