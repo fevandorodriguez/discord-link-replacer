@@ -2,7 +2,7 @@
 
 A Discord bot that rewrites links to X/Twitter, Instagram, TikTok, Reddit
 and Bluesky into mirror-domain equivalents (`fxtwitter.com`,
-`oginstagram.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
+`oginstagram.com`, `tnktok.com`, `vxreddit.com`, `fxbsky.app`) that produce
 working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
@@ -47,8 +47,8 @@ Per-platform settings live in `config.json`:
 |---|---|---|
 | twitter | true | `fxtwitter.com` |
 | instagram | true | `oginstagram.com` |
-| tiktok | true | `vxtiktok.com` |
-| reddit | true | `rxddit.com` |
+| tiktok | true | `tnktok.com` |
+| reddit | true | `vxreddit.com` |
 | bluesky | true | `fxbsky.app` |
 
 Each platform can be overridden from the environment without editing the
@@ -90,11 +90,12 @@ No mirror restores likes or view counts on the original post; engagement
 needs an authenticated action on Instagram's own clients, so any embed
 fixer is a dead end for that by construction.
 
-Under Docker Compose, `config.json` is bind-mounted read-only from the
-project directory, so editing it and running `docker compose restart`
-picks the change up — no rebuild. (The file is also baked into the image
-by the `Dockerfile`, so a container run without that mount uses the
-copy from build time.)
+Under Docker Compose, the whole `data/` directory (not `config.json`
+itself — see Running below for why) is bind-mounted read-write from the
+project directory, so editing `data/config.json` and running
+`docker compose restart` picks the change up — no rebuild. (A default
+`config.json` is also baked into the image by the `Dockerfile`, so a
+container run without that mount uses the copy from build time.)
 
 ## Delivery modes
 
@@ -173,10 +174,57 @@ token — or an invalid one, or Message Content left disabled in the
 Developer Portal — makes the process print a readable error and exit 1
 rather than starting up broken or crash-looping silently.
 
-Compose mounts `./config.json` into the container read-only, so a
-`config.json` change (mirror domains, per-platform enable/disable, `mode`
-when it's not overridden by `LINKFIX_MODE`) needs only
-`docker compose restart` — that rereads the file, no rebuild.
+Compose mounts `./data` (not `./config.json` directly) into the container
+at `/app/data`, read-write, and the container is pointed at
+`/app/data/config.json` via `LINKFIX_CONFIG_FILE` (set in the
+`Dockerfile`). Edit `data/config.json` on the host — that's the live file
+now, the same one the admin panel's mode toggle writes to — and
+`docker compose restart` picks up a hand edit (mirror domains,
+per-platform enable/disable, `mode` when it's not overridden by
+`LINKFIX_MODE`) with no rebuild, exactly as before.
+
+This is a directory mount rather than a single-file mount so the admin
+panel can write to it: bind-mounting one file makes that path its own
+mount point, and on Linux `rename()` onto a mount point fails with EBUSY,
+which broke the panel's atomic write-then-rename on every mode change
+under the old single-file layout. **`data/config.json` must exist in the
+project directory before the first `docker compose up`** — the repo ships
+one, so a normal `git clone`/`git pull` already has it, but if you ever
+delete it, recreate it (e.g. `cp config.json data/config.json`) before
+starting the container, or the bind mount hides the image's own default
+and `loadConfig` fails with a readable "file not found" error rather than
+starting broken.
+
+**The host directory must be writable by the container's user, and the
+Dockerfile cannot do this for you.** The image runs as `node`, uid 1000,
+and the `Dockerfile` does `chown` `/app/data` — but a bind mount replaces
+that directory at runtime, and permission checks then use the *host*
+inode's ownership, so the image-time `chown` has no effect. On a host
+where the project sits under a root-owned path (`/opt/<app>`, say),
+`./data` is `root:root` and uid 1000 cannot write to it: the panel's mode
+toggle fails with `EACCES` before it ever reaches the rename, and the API
+reports it as a 500. Set it once, on the host:
+
+```bash
+chown -R 1000:1000 ./data
+```
+
+Match the numeric uid, not a name — the container's `node` is uid 1000
+regardless of what user 1000 is called on the host.
+
+**Upgrading from the old single-file layout?** If you previously ran with
+`./config.json:/app/config.json:ro` in `compose.yml`, copy your live,
+hand-edited file across before the first `docker compose up -d` on the new
+layout:
+
+```bash
+cp config.json data/config.json
+chown -R 1000:1000 data
+```
+
+Without this, `data/config.json` starts at the repo's committed defaults
+while your customised root `config.json` sits unread beside it — mirror
+domains you swapped and a hand-set `mode` revert silently, with no error.
 
 An `.env` change — **including `LINKFIX_MODE`** — is different: `restart`
 stops and starts the *existing* container, and environment loaded via
@@ -191,6 +239,95 @@ image.
 If `docker compose up -d` ever reports the container as already up to
 date and you're not seeing the change, add `--force-recreate` to force
 it: `docker compose up -d --force-recreate`.
+
+## Admin panel
+
+A small password-gated page, served from inside the bot process at
+`discord.fev.space`, that shows recent delivery activity and lets you
+switch between `repost` and `suppress` without touching the server. It
+never shows a message or a rewritten link — but it is not limited to a
+channel name and a level either: an entry can include the channel ID, the
+message ID, the bot's own Discord tag, the platform config, Discord API
+error text, and a full stack trace when something failed. Size what a
+leaked panel password costs you accordingly; see Limits below.
+
+### Enabling it
+
+The panel does not start unless `ADMIN_PASSWORD_HASH` is set. Generate
+one with:
+
+```bash
+npm run hash-password -- "your password"
+```
+
+and put the result in `.env` as `ADMIN_PASSWORD_HASH`. **This is
+deliberate fail-closed behaviour**: an unset or malformed hash means no
+panel, logged as a warning, rather than a panel with a guessable or
+absent password. The bot itself is unaffected either way.
+
+`SESSION_SECRET` is optional. If it's unset — or set but empty, which
+`.env.example` deliberately avoids by shipping the line commented out
+rather than as `SESSION_SECRET=` — a random secret is generated at process
+start, which means every session (i.e. every signed-in browser) is
+invalidated on restart and you'll need to sign in again. Set
+`SESSION_SECRET` to a fixed value of **at least 32 characters** in `.env`
+if you'd rather sessions survive a restart. Unlike unset, an explicit
+value that's too short is **not** filled in for you: the panel logs a
+warning and refuses to start at all, the same fail-closed handling as a
+missing `ADMIN_PASSWORD_HASH` — a short secret is brute-forceable, and a
+forged session cookie is a full bypass of the password gate, so this
+never falls back to "start anyway."
+
+Because these are `.env` values, changing either of them needs
+`docker compose up -d` (not `restart`) to take effect — see the env vs.
+config.json vs. code distinction under Running above; it applies here
+too. `ADMIN_PASSWORD_HASH`, `SESSION_SECRET` and `ADMIN_PORT` are all
+`.env` values.
+
+### Caddy
+
+Point a subdomain at the container over the internal `monkey` network
+(see `compose.yml` — the container joins it but publishes no port to the
+host, so the panel is reachable only through Caddy):
+
+```
+discord.fev.space {
+	reverse_proxy link-replacer:3000
+}
+```
+
+**Adding this block requires reloading Caddy**, and this Caddy instance
+fronts around ten other, unrelated live apps on the same box — a reload
+affects all of them, not just this one. Treat it accordingly.
+
+The `3000` above must match `ADMIN_PORT` (default 3000 if unset) — if you
+set `ADMIN_PORT` in `.env`, update this block to the same port and reload
+Caddy, or the proxy silently points at the wrong port and the panel
+becomes unreachable through Caddy even though the container itself is
+fine.
+
+### Limits
+
+- **The login rate limiter is global, not per visitor.** The container
+  sits behind Caddy, so every request's socket address is Caddy's own,
+  not the actual visitor's — the limiter cannot tell requests apart by
+  origin, so it counts failures for everyone in one shared bucket. Five
+  failed logins from *anyone* (including you, mistyping your own
+  password) locks the panel for fifteen minutes for *everyone*, and
+  because the limiter's state lives only in memory, the one way to clear
+  it early is to restart the container. This is a deliberate trade-off,
+  not an oversight: there is exactly one legitimate user, and an
+  attacker has no way to influence which bucket their attempts land in.
+- **Mode is locked when `LINKFIX_MODE` is set in the environment.** The
+  env var always wins over `config.json` (see Delivery modes above), so
+  when it's set the panel's toggle is disabled and shows which variable
+  to unset to hand control back to the panel. It never silently accepts
+  a change that `LINKFIX_MODE` would then override.
+- **History is memory-only and capped.** Recent activity resets on every
+  restart and only keeps the most recent entries; it is not a
+  persistent audit log.
+- **No attribution.** An entry names the channel and what happened, not
+  which member's message triggered it.
 
 ## Behaviour and limits
 

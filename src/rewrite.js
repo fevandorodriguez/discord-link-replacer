@@ -16,7 +16,25 @@ import { matchRule, normaliseHost } from './rules.js';
 // one, which is what makes the start-only check in isMasked sufficient.
 const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/gi;
 
-const TRACKING_PARAMS = new Set(['s', 't', 'si', 'igsh', 'igshid', 'fbclid', 'ref_src', 'ref_url']);
+// Only links that already match a platform rule reach stripTracking, so these
+// names are judged against those five hosts alone — a name that is tracking on
+// x.com but load-bearing elsewhere is still safe to list here.
+//
+// Deliberately absent, because each one changes what the link resolves to
+// rather than who gets credited for the click: `img_index` (Instagram carousel
+// position, which applyAlbumIndex moves into the path), `context` (Reddit
+// comment permalinks, which uses it for parent depth), and `lang`.
+const TRACKING_PARAMS = new Set([
+  // Platform share metadata
+  's', 't', 'si', 'igsh', 'igshid', 'igsi', 'fbclid', 'ref_src', 'ref_url', 'ref_source',
+  // Ad click identifiers
+  'gclid', 'gbraid', 'wbraid', 'dclid', 'msclkid',
+  'twclid', 'ttclid', 'rdt_cid', 'li_fat_id', 'yclid', 'epik',
+  // Email and campaign tooling
+  'mc_cid', 'mc_eid', '_hsenc', '_hsmi',
+  // Analytics, including the Google cross-domain linker
+  '_ga', '_gl',
+]);
 // Punctuation that ends a sentence rather than a URL.
 const TRAILING_PUNCTUATION = /[.,;:!?'"\]}]+$/;
 

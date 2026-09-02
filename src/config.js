@@ -44,8 +44,16 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
     if (entry.enabled !== undefined && typeof entry.enabled !== 'boolean') {
       throw new Error(`Invalid "enabled" for ${platform} in ${file}: expected true or false, got ${JSON.stringify(entry.enabled)}.`);
     }
+    // An optional real post path for the mirror health check to fetch. The root
+    // alone cannot see a mirror that is blocked at the API rather than dead —
+    // rxddit served its front page normally while returning a block notice for
+    // every actual link. Validated here so a typo is a startup error rather
+    // than a health check that quietly probes the wrong URL forever.
+    if (entry.canary !== undefined && (typeof entry.canary !== 'string' || !entry.canary.startsWith('/'))) {
+      throw new Error(`Invalid "canary" for ${platform} in ${file}: expected a path beginning with "/", got ${JSON.stringify(entry.canary)}.`);
+    }
     const enabled = envEnabled(env, platform) ?? entry.enabled ?? true;
-    platforms[platform] = { enabled, domain };
+    platforms[platform] = { enabled, domain, ...(entry.canary ? { canary: entry.canary } : {}) };
   }
 
   const { mode, modeSource } = resolveMode(raw.mode, env, file);
