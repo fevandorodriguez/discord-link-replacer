@@ -5,6 +5,7 @@ import { handleMessage } from './bot.js';
 import { createLogBuffer } from './logbuffer.js';
 import { createModeStore } from './admin/mode-store.js';
 import { createAdminServer } from './admin/server.js';
+import { checkMirrors } from './mirror-check.js';
 import { randomBytes } from 'node:crypto';
 
 const logBuffer = createLogBuffer();
@@ -77,7 +78,43 @@ client.once(Events.ClientReady, (ready) => {
     .map(([name, s]) => `${name}→${s.domain}`)
     .join(', ');
   logger.info(`Logged in as ${ready.user.tag} in ${config.mode} mode (from ${config.modeSource}). Rewriting: ${enabled || 'nothing'}`);
+  startMirrorChecks();
 });
+
+// These mirrors are volunteer-run and die without notice — four died in a
+// single afternoon, and the two that mattered most kept answering HTTP 200
+// while serving an error page, so nothing looked wrong until someone posted a
+// link. Check on boot and daily thereafter, and say so loudly: a mirror that
+// has died is rewriting every link to a broken page, which is worse than not
+// rewriting at all.
+const MIRROR_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+async function runMirrorCheck() {
+  let results;
+  try {
+    results = await checkMirrors(config.platforms);
+  } catch (error) {
+    // A health check must never be the thing that takes the bot down.
+    logger.error(`mirror check failed to run: ${error?.message ?? error}`);
+    return;
+  }
+
+  const broken = results.filter((r) => !r.ok);
+  if (broken.length === 0) {
+    logger.info(`Mirror check: all ${results.length} reachable.`);
+    return;
+  }
+  for (const { platform, domain, reason } of broken) {
+    logger.error(`Mirror check: ${platform} → ${domain} looks broken (${reason}). Links for this platform are being rewritten to a page that does not work.`);
+  }
+}
+
+function startMirrorChecks() {
+  runMirrorCheck();
+  const timer = setInterval(runMirrorCheck, MIRROR_CHECK_INTERVAL_MS);
+  // Don't hold the process open on shutdown for a check that can wait a day.
+  timer.unref?.();
+}
 
 client.on(Events.MessageCreate, async (message) => {
   if (!webhooks) return; // not logged in yet

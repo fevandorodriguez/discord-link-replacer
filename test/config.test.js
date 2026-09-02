@@ -214,3 +214,21 @@ describe('loadConfig — modeSource', () => {
     expect(config.modeSource).toBe('default');
   });
 });
+
+describe('loadConfig — mirror canary', () => {
+  it('carries a canary path through to the platform entry', () => {
+    write({ ...VALID, reddit: { enabled: true, domain: 'vxreddit.com', canary: '/r/x/comments/abc/t/' } });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.platforms.reddit.canary).toBe('/r/x/comments/abc/t/');
+  });
+
+  it('leaves canary undefined when none is set', () => {
+    write(VALID);
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).platforms.twitter.canary).toBeUndefined();
+  });
+
+  it.each([42, true, {}, 'no-leading-slash'])('rejects the invalid canary %s', (bad) => {
+    write({ ...VALID, reddit: { enabled: true, domain: 'vxreddit.com', canary: bad } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/canary/i);
+  });
+});

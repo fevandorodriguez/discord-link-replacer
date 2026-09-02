@@ -1,8 +1,24 @@
 {
   "mode": "repost",
-  "twitter":   { "enabled": true, "domain": "fxtwitter.com" },
-  "instagram": { "enabled": true, "domain": "oginstagram.com" },
-  "tiktok":    { "enabled": true, "domain": "tnktok.com" },
-  "reddit":    { "enabled": true, "domain": "vxreddit.com" },
-  "bluesky":   { "enabled": true, "domain": "fxbsky.app" }
+  "twitter": {
+    "enabled": true,
+    "domain": "fxtwitter.com"
+  },
+  "instagram": {
+    "enabled": true,
+    "domain": "oginstagram.com"
+  },
+  "tiktok": {
+    "enabled": true,
+    "domain": "tnktok.com"
+  },
+  "reddit": {
+    "enabled": true,
+    "domain": "vxreddit.com",
+    "canary": "/r/london/comments/1w57pv4/just_stop_oil_is_back_after_the_uks_hottest/"
+  },
+  "bluesky": {
+    "enabled": true,
+    "domain": "fxbsky.app"
+  }
 }
