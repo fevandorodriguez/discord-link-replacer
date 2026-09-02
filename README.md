@@ -68,27 +68,64 @@ These mirror domains are volunteer-run, third-party infrastructure — they
 go down or change hands periodically. When one does, swap it with an
 env override (or edit `config.json`) and restart; no code change needed.
 
-Instagram mirrors tested 2026-09-01, so a swap is a choice rather than a
-guess:
+### Mirrors in use
 
-| Mirror | Behaviour |
+Every one of these was verified by fetching a real post and reading the
+response body, not by checking the status code — two mirrors died while
+still answering HTTP 200 with an error page, which is exactly what a status
+check misses.
+
+| Platform | Mirror | Why this one |
+|---|---|---|
+| twitter | `fxtwitter.com` | Stable throughout; the reference implementation of the pattern. |
+| instagram | `oginstagram.com` | Sets `og:url` back to the original post, so the embed title links to Instagram. Serves 403 to datacenter IPs, so it cannot be probed with `curl` from a VPS — irrelevant to the bot, which never fetches a mirror. |
+| tiktok | `tnktok.com` | fxTikTok. Handles `/video/` and `/photo/` slideshows, and serves `og:image` from its own CDN. |
+| reddit | `vxreddit.com` | Serves `og:image` straight from `i.redd.it` rather than proxying through a third party. |
+| bluesky | `fxbsky.app` | Stable throughout. |
+
+### Tested alternates
+
+Working, but second choice — each proxies media through a third-party
+rewrite host rather than the platform's own CDN:
+
+| Platform | Alternate | Note |
+|---|---|---|
+| instagram | `toinstagram.com`, `uuinstagram.com` | InstaFix family. Set `og:url` correctly; serve a *relative* `og:video`, which embeds less reliably. |
+| instagram | `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
+| tiktok | `fixtiktok.com` | Works; routes through a `workers.dev` subdomain. |
+| reddit | `redditez.com` | Works; proxies through `embedez.com`. |
+
+### Known dead
+
+Kept here so nobody re-tries them:
+
+| Mirror | State |
 |---|---|
-| `oginstagram.com` | In use. Verified working in Discord. Note it serves 403 to datacenter IPs, so it cannot be probed with `curl` from a VPS — that does not affect the bot, which never fetches the mirror itself. |
-| `uuinstagram.com` | Works, including reels, though reels can be slow to appear. Sets `og:url` to the original post; album index via path. Serves a relative `og:video` URL. |
-| `toinstagram.com` | Same InstaFix family as `uuinstagram`, with the same relative `og:video`. The natural fallback. |
-| `instagirlcock.com` | Also sets `og:url`, with an absolute `og:image`, full attribution and the caption. Functionally the strongest tested; the domain name is the problem. |
-| `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
-| `kkinstagram.com` | Serves no OpenGraph tags at all and sends people to `kkclip.com`. |
-| `ddinstagram.com`, `fxinstagram.com` | Dead — no DNS record and a parked IP respectively. |
+| `vxtiktok.com` | Taken down by a legal request. Serves the notice at **HTTP 200**. |
+| `rxddit.com` | Reddit is actively blocking it via API changes. Front page looks healthy; every real post returns a block notice. |
+| `ddinstagram.com` | No DNS record. |
+| `fxinstagram.com` | Resolves to a parked IP; connections time out. |
+| `kkinstagram.com` | Serves no OpenGraph tags and redirects people to `kkclip.com`. |
 | `instagramez.com` | **Avoid.** Redirects through an advertising network. |
 
-`/share/` links could not be verified against any mirror: a made-up share
-code returns 404 everywhere, so testing needs a real one. If share links
-stop embedding after a mirror swap, that is the first thing to check.
+### Swapping one
 
-No mirror restores likes or view counts on the original post; engagement
-needs an authenticated action on Instagram's own clients, so any embed
-fixer is a dead end for that by construction.
+A dead mirror is a config change, not a code change — `LINKFIX_<PLATFORM>_DOMAIN`
+in `.env` (then `docker compose up -d`), or the `domain` field in
+`data/config.json` (then `docker compose restart`).
+
+The bot checks every configured mirror on boot and once a day, and warns
+in the log and the admin panel when one looks broken. A platform may also
+set a `canary` path — a real post — because a mirror blocked at the API
+serves a perfectly healthy front page; `rxddit` did exactly that.
+
+Two caveats worth knowing. `/share/` links have never been verified against
+any Instagram mirror: a made-up share code returns 404 everywhere, so
+testing needs a real one, and that is the first thing to check if share
+links stop embedding after a swap. And no mirror restores likes or view
+counts on the original post — engagement needs an authenticated action on
+the platform's own clients, so any embed fixer is a dead end for that by
+construction.
 
 Under Docker Compose, the whole `data/` directory (not `config.json`
 itself — see Running below for why) is bind-mounted read-write from the
