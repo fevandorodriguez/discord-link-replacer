@@ -195,6 +195,37 @@ starting the container, or the bind mount hides the image's own default
 and `loadConfig` fails with a readable "file not found" error rather than
 starting broken.
 
+**The host directory must be writable by the container's user, and the
+Dockerfile cannot do this for you.** The image runs as `node`, uid 1000,
+and the `Dockerfile` does `chown` `/app/data` — but a bind mount replaces
+that directory at runtime, and permission checks then use the *host*
+inode's ownership, so the image-time `chown` has no effect. On a host
+where the project sits under a root-owned path (`/opt/<app>`, say),
+`./data` is `root:root` and uid 1000 cannot write to it: the panel's mode
+toggle fails with `EACCES` before it ever reaches the rename, and the API
+reports it as a 500. Set it once, on the host:
+
+```bash
+chown -R 1000:1000 ./data
+```
+
+Match the numeric uid, not a name — the container's `node` is uid 1000
+regardless of what user 1000 is called on the host.
+
+**Upgrading from the old single-file layout?** If you previously ran with
+`./config.json:/app/config.json:ro` in `compose.yml`, copy your live,
+hand-edited file across before the first `docker compose up -d` on the new
+layout:
+
+```bash
+cp config.json data/config.json
+chown -R 1000:1000 data
+```
+
+Without this, `data/config.json` starts at the repo's committed defaults
+while your customised root `config.json` sits unread beside it — mirror
+domains you swapped and a hand-set `mode` revert silently, with no error.
+
 An `.env` change — **including `LINKFIX_MODE`** — is different: `restart`
 stops and starts the *existing* container, and environment loaded via
 `env_file` is baked in at container-create time, so `restart` will not
