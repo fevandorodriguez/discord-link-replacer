@@ -314,3 +314,20 @@ describe('rewrite — tracking parameter sanitisation', () => {
       .toBe('https://oginstagram.com/p/DcwKEouiDPn/3/');
   });
 });
+
+describe('rewrite — instagram share parameters', () => {
+  it.each(['igsh', 'igshid', 'igsi'])('strips %s', (param) => {
+    expect(rewrite(`https://www.instagram.com/p/DcwKEouiDPn/?${param}=NGVjOTQ`, ALL_ON).content)
+      .toBe('https://oginstagram.com/p/DcwKEouiDPn/');
+  });
+
+  it('strips the whole share-sheet cluster at once', () => {
+    expect(rewrite('https://www.instagram.com/reel/Cabc123/?igsh=MXY&igsi=abc&utm_source=ig_web_copy_link', ALL_ON).content)
+      .toBe('https://oginstagram.com/reel/Cabc123/');
+  });
+
+  it('strips them without disturbing the carousel index', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=2&igsi=abc', ALL_ON).content)
+      .toBe('https://oginstagram.com/p/DcwKEouiDPn/2/');
+  });
+});

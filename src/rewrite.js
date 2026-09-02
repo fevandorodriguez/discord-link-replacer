@@ -26,7 +26,7 @@ const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/gi;
 // comment permalinks, which uses it for parent depth), and `lang`.
 const TRACKING_PARAMS = new Set([
   // Platform share metadata
-  's', 't', 'si', 'igsh', 'igshid', 'fbclid', 'ref_src', 'ref_url', 'ref_source',
+  's', 't', 'si', 'igsh', 'igshid', 'igsi', 'fbclid', 'ref_src', 'ref_url', 'ref_source',
   // Ad click identifiers
   'gclid', 'gbraid', 'wbraid', 'dclid', 'msclkid',
   'twclid', 'ttclid', 'rdt_cid', 'li_fat_id', 'yclid', 'epik',
