@@ -268,3 +268,49 @@ describe('rewrite — instagram URL forms beyond /p/ and /reel/', () => {
     expect(rewrite(input, ALL_ON).changed).toBe(false);
   });
 });
+
+describe('rewrite — tracking parameter sanitisation', () => {
+  // Only links we already rewrite are sanitised; a link on an unmatched host is
+  // left alone entirely, which is why this suite only uses the five platforms.
+  it.each([
+    'gclid', 'gbraid', 'wbraid', 'dclid',
+    'msclkid', 'twclid', 'ttclid', 'rdt_cid', 'li_fat_id', 'yclid', 'epik',
+    'mc_cid', 'mc_eid', '_hsenc', '_hsmi',
+    '_ga', '_gl', 'ref_source',
+  ])('strips %s', (param) => {
+    expect(rewrite(`https://x.com/jack/status/20?${param}=abc123`, ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20');
+  });
+
+  it('still strips the parameters it stripped before', () => {
+    expect(rewrite('https://x.com/jack/status/20?s=20&t=AbCd&ref_src=twsrc', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20');
+  });
+
+  it('still strips anything utm_-prefixed', () => {
+    expect(rewrite('https://x.com/jack/status/20?utm_source=x&utm_content=y', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20');
+  });
+
+  it('strips several trackers at once and keeps the rest', () => {
+    expect(rewrite('https://x.com/jack/status/20?gclid=a&lang=en&fbclid=b', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20?lang=en');
+  });
+
+  // These three look like tracking and are not. Stripping them breaks the link
+  // rather than cleaning it, so each gets an explicit guard.
+  it('preserves Reddit comment context, which controls parent depth', () => {
+    expect(rewrite('https://www.reddit.com/r/videos/comments/abc123/title/?context=3', ALL_ON).content)
+      .toBe('https://rxddit.com/r/videos/comments/abc123/title/?context=3');
+  });
+
+  it('preserves lang', () => {
+    expect(rewrite('https://x.com/jack/status/20?lang=en', ALL_ON).content)
+      .toBe('https://fxtwitter.com/jack/status/20?lang=en');
+  });
+
+  it('still moves img_index into the path rather than stripping it', () => {
+    expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=3', ALL_ON).content)
+      .toBe('https://oginstagram.com/p/DcwKEouiDPn/3/');
+  });
+});
