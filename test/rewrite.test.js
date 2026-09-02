@@ -58,9 +58,9 @@ describe('rewrite — every platform', () => {
     ['https://x.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
     ['https://twitter.com/jack/status/20', 'https://fxtwitter.com/jack/status/20'],
     ['https://www.instagram.com/reel/Cabc123/', 'https://oginstagram.com/reel/Cabc123/'],
-    ['https://www.tiktok.com/@someone/video/7123456789', 'https://vxtiktok.com/@someone/video/7123456789'],
-    ['https://vm.tiktok.com/ZMabc123/', 'https://vxtiktok.com/ZMabc123/'],
-    ['https://www.reddit.com/r/videos/comments/abc123/title/', 'https://rxddit.com/r/videos/comments/abc123/title/'],
+    ['https://www.tiktok.com/@someone/video/7123456789', 'https://tnktok.com/@someone/video/7123456789'],
+    ['https://vm.tiktok.com/ZMabc123/', 'https://tnktok.com/ZMabc123/'],
+    ['https://www.reddit.com/r/videos/comments/abc123/title/', 'https://vxreddit.com/r/videos/comments/abc123/title/'],
     ['https://bsky.app/profile/someone.bsky.social/post/3kabc', 'https://fxbsky.app/profile/someone.bsky.social/post/3kabc'],
   ])('rewrites %s', (input, expected) => {
     expect(rewrite(input, ALL_ON).content).toBe(expected);
@@ -69,11 +69,11 @@ describe('rewrite — every platform', () => {
   it('rewrites several links in one message', () => {
     const input = 'https://x.com/a/status/1 and https://vm.tiktok.com/ZMabc123/ both';
     expect(rewrite(input, ALL_ON).content)
-      .toBe('https://fxtwitter.com/a/status/1 and https://vxtiktok.com/ZMabc123/ both');
+      .toBe('https://fxtwitter.com/a/status/1 and https://tnktok.com/ZMabc123/ both');
   });
 
   it('rewrites only the enabled platforms in a mixed message', () => {
-    const mixed = { ...ALL_ON, tiktok: { enabled: false, domain: 'vxtiktok.com' } };
+    const mixed = { ...ALL_ON, tiktok: { enabled: false, domain: 'tnktok.com' } };
     const input = 'https://x.com/a/status/1 and https://vm.tiktok.com/ZMabc123/';
     expect(rewrite(input, mixed).content)
       .toBe('https://fxtwitter.com/a/status/1 and https://vm.tiktok.com/ZMabc123/');
@@ -301,7 +301,7 @@ describe('rewrite — tracking parameter sanitisation', () => {
   // rather than cleaning it, so each gets an explicit guard.
   it('preserves Reddit comment context, which controls parent depth', () => {
     expect(rewrite('https://www.reddit.com/r/videos/comments/abc123/title/?context=3', ALL_ON).content)
-      .toBe('https://rxddit.com/r/videos/comments/abc123/title/?context=3');
+      .toBe('https://vxreddit.com/r/videos/comments/abc123/title/?context=3');
   });
 
   it('preserves lang', () => {
@@ -329,5 +329,26 @@ describe('rewrite — instagram share parameters', () => {
   it('strips them without disturbing the carousel index', () => {
     expect(rewrite('https://www.instagram.com/p/DcwKEouiDPn/?img_index=2&igsi=abc', ALL_ON).content)
       .toBe('https://oginstagram.com/p/DcwKEouiDPn/2/');
+  });
+});
+
+describe('rewrite — tiktok photo slideshows', () => {
+  it('rewrites a /photo/ slideshow, not just /video/', () => {
+    expect(rewrite('https://www.tiktok.com/@squiress33/photo/7676148900687891744', ALL_ON).content)
+      .toBe('https://tnktok.com/@squiress33/photo/7676148900687891744');
+  });
+
+  it('strips the share-sheet parameters from a slideshow link', () => {
+    expect(rewrite('https://www.tiktok.com/@squiress33/photo/7676148900687891744?q=squiress33&t=1784027773320', ALL_ON).content)
+      .toBe('https://tnktok.com/@squiress33/photo/7676148900687891744?q=squiress33');
+  });
+
+  it('still rewrites a /video/ link', () => {
+    expect(rewrite('https://www.tiktok.com/@someone/video/7123456789', ALL_ON).content)
+      .toBe('https://tnktok.com/@someone/video/7123456789');
+  });
+
+  it('still ignores a bare profile', () => {
+    expect(rewrite('https://www.tiktok.com/@someone', ALL_ON).changed).toBe(false);
   });
 });

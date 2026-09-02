@@ -2,7 +2,7 @@
 
 A Discord bot that rewrites links to X/Twitter, Instagram, TikTok, Reddit
 and Bluesky into mirror-domain equivalents (`fxtwitter.com`,
-`oginstagram.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
+`oginstagram.com`, `tnktok.com`, `vxreddit.com`, `fxbsky.app`) that produce
 working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
@@ -47,8 +47,8 @@ Per-platform settings live in `config.json`:
 |---|---|---|
 | twitter | true | `fxtwitter.com` |
 | instagram | true | `oginstagram.com` |
-| tiktok | true | `vxtiktok.com` |
-| reddit | true | `rxddit.com` |
+| tiktok | true | `tnktok.com` |
+| reddit | true | `vxreddit.com` |
 | bluesky | true | `fxbsky.app` |
 
 Each platform can be overridden from the environment without editing the

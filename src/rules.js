@@ -3,8 +3,8 @@ export const PLATFORMS = ['twitter', 'instagram', 'tiktok', 'reddit', 'bluesky']
 export const DEFAULT_DOMAINS = {
   twitter: 'fxtwitter.com',
   instagram: 'oginstagram.com',
-  tiktok: 'vxtiktok.com',
-  reddit: 'rxddit.com',
+  tiktok: 'tnktok.com',
+  reddit: 'vxreddit.com',
   bluesky: 'fxbsky.app',
 };
 
@@ -32,7 +32,9 @@ export const RULES = [
   {
     platform: 'tiktok',
     hosts: ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'],
-    path: /^\/(@[\w.]+\/video\/\d+|t\/[A-Za-z0-9]+)/,
+    // /photo/ is TikTok's image-slideshow form. It embeds as badly as video
+    // does and is produced by the same share sheet, so it belongs here.
+    path: /^\/(@[\w.]+\/(?:video|photo)\/\d+|t\/[A-Za-z0-9]+)/,
     shortHosts: ['vm.tiktok.com', 'vt.tiktok.com'],
     shortPath: /^\/[A-Za-z0-9]+\/?$/,
   },

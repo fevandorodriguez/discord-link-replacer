@@ -10,8 +10,8 @@ let file;
 const VALID = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
   instagram: { enabled: true, domain: 'oginstagram.com' },
-  tiktok: { enabled: true, domain: 'vxtiktok.com' },
-  reddit: { enabled: true, domain: 'rxddit.com' },
+  tiktok: { enabled: true, domain: 'tnktok.com' },
+  reddit: { enabled: true, domain: 'vxreddit.com' },
   bluesky: { enabled: true, domain: 'fxbsky.app' },
 };
 
@@ -81,7 +81,7 @@ describe('loadConfig', () => {
   });
 
   it('lets an env var enable a platform disabled in the file', () => {
-    write({ ...VALID, tiktok: { enabled: false, domain: 'vxtiktok.com' } });
+    write({ ...VALID, tiktok: { enabled: false, domain: 'tnktok.com' } });
     const config = loadConfig({
       file,
       env: { DISCORD_TOKEN: 'abc', LINKFIX_TIKTOK_ENABLED: 'TRUE' },
@@ -99,7 +99,7 @@ describe('loadConfig — enabled must be a real boolean', () => {
   ])('throws when enabled is %s rather than a boolean', (_label, value) => {
     // "enabled": "false" is a truthy string: silently leaving the platform on
     // is the exact opposite of what the operator asked for.
-    write({ ...VALID, tiktok: { enabled: value, domain: 'vxtiktok.com' } });
+    write({ ...VALID, tiktok: { enabled: value, domain: 'tnktok.com' } });
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }))
       .toThrow(/enabled.*tiktok/i);
   });
