@@ -324,8 +324,9 @@ it: `docker compose up -d --force-recreate`.
 ## Admin panel
 
 A small password-gated page, served from inside the bot process at
-`discord.fev.space`, that shows recent delivery activity and lets you
-switch between `repost` and `suppress` without touching the server. It
+`discord.fev.space`, that shows recent delivery activity, lets you
+switch between `repost` and `suppress` without touching the server, and
+edits the restart announcement (see below). It
 never shows a message or a rewritten link — but it is not limited to a
 channel name and a level either: an entry can include the channel ID, the
 message ID, the bot's own Discord tag, the platform config, Discord API
@@ -386,6 +387,87 @@ set `ADMIN_PORT` in `.env`, update this block to the same port and reload
 Caddy, or the proxy silently points at the wrong port and the panel
 becomes unreachable through Caddy even though the container itself is
 fine.
+
+### Restart announcements
+
+The bot can say something in a channel of your choosing every time it
+starts up — one line picked at random from a list of quips. It exists to
+make a restart visible ("Someone turned me off. Cheeky bastard.") rather
+than to be useful.
+
+**It is off until you pick a channel.** A fresh install announces
+nothing: the channel is `""` and the bot starts silently. Sign in to the
+panel, choose a channel from the **Restart announcement** dropdown, press
+**Save**, and the next restart speaks.
+
+The dropdown only offers channels **the bot can actually post in** — it
+lists cached text channels where the bot has Send Messages, so a channel
+that would fail silently at send time never appears as an option. Two
+consequences worth knowing:
+
+- The panel starts *before* the bot logs in to Discord, and until then
+  there are no channels to offer. If the list is empty, the page says so;
+  reload once the bot is up.
+- If a previously saved channel is no longer visible (permission
+  revoked, channel deleted, bot not logged in yet) the dropdown keeps it
+  as `Channel <id> (not visible to the bot)` rather than quietly resetting
+  to "No announcements" and throwing the setting away on your next Save.
+
+Quips are edited in the same section — add with the box, remove with the
+button beside each one — and nothing is written until you press **Save**,
+which posts the whole list at once. Saved settings are written to the
+config file the bot booted from — `data/config.json` under Docker — and
+are validated by exactly the same rules `loadConfig` applies at startup,
+so a save the panel accepts can never produce a config the next restart
+refuses to read. At most 50 quips, each at most 2000 characters,
+non-empty. An empty list is silent even with a channel picked.
+
+**Test** posts one of the *saved* quips immediately so you can confirm
+the channel works, and reports what happened in plain words — posted, the
+bot cannot see that channel, the bot cannot post there, and so on. It is
+rate-limited to **one test every 30 seconds, server-side and shared**:
+that limit is not about you, it bounds what a leaked panel password can
+do with an endpoint that posts arbitrary text on demand. Note that Test
+uses what was last *saved*, not what is currently on screen — press Save
+first.
+
+#### Seeded quips and the deployed config
+
+`config.json` and `data/config.json` in this repo ship with ten starter
+quips, **but seeding them here does not change production.** The live
+config is the bind-mounted `./data/config.json` on the deployment host
+(see `compose.yml`), which is written by the panel and does not have an
+`announce` block. A missing block is not an error — it defaults to
+`{ "channelId": "", "quips": [] }` and the bot boots normally with
+announcements off — so the symptom is simply that **the seeded quips are
+not there in production**. Either is a one-step fix:
+
+- add the quips through the panel, which persists them to the live file; or
+- add the block to the live `data/config.json` on the host and restart:
+
+  ```json
+  "announce": {
+    "channelId": "",
+    "quips": ["Someone turned me off. Cheeky bastard.", "What did I miss?!"]
+  }
+  ```
+
+#### Announcement limits
+
+- **Every restart announces.** There is no cooldown between startups and
+  no "only if it's been a while" rule. A crash loop that gets *past login*
+  will post a quip on every cycle until someone notices — which is
+  arguably the feature working, but it is noise in a channel people read.
+  A restart that fails before login (bad token, disallowed intents) exits
+  first and stays quiet.
+- **Mentions are suppressed.** Quips are sent with `allowedMentions:
+  { parse: [] }`, so a quip containing `@everyone` posts the text and
+  pings nobody. This matters because quips are free text set through a web
+  page.
+- **Anyone with the panel password can make the bot post arbitrary text
+  in any channel it can see.** The quip editor plus the Test button is, by
+  design, a "say this, there, now" control. The 30-second cooldown bounds
+  the rate, not the capability. Size the panel password accordingly.
 
 ### Limits
 

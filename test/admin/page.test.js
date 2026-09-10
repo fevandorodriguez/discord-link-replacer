@@ -39,3 +39,42 @@ describe('dashboard', () => {
     expect(html).toContain('suppress');
   });
 });
+
+describe('dashboard — announcements', () => {
+  it('has a channel picker and a quip editor', () => {
+    const html = renderDashboard();
+    expect(html).toContain('/api/announce');
+    expect(html).toMatch(/<select[^>]*id="announce-channel"/);
+    expect(html).toContain('announce-quips');
+  });
+
+  it('has a test button that calls the test endpoint', () => {
+    expect(renderDashboard()).toContain('/api/announce/test');
+  });
+
+  it('is still one self-contained document with no external assets', () => {
+    const html = renderDashboard();
+    expect(html).not.toMatch(/src="https?:/);
+    expect(html).not.toMatch(/href="https?:/);
+  });
+
+  it('maps every announce outcome to a plain sentence', () => {
+    const html = renderDashboard();
+    for (const outcome of ['sent', 'no-channel', 'no-quips', 'channel-missing', 'not-postable', 'failed']) {
+      expect(html).toContain(`'${outcome}'`);
+    }
+    expect(html).toContain('Pick a channel first');
+    expect(html).toContain('Add a quip first');
+    expect(html).toContain('cannot see that channel');
+    expect(html).toContain('cannot post there');
+    expect(html).toContain('Discord rejected it');
+  });
+
+  it('builds quip and channel text as DOM text rather than interpolated markup', () => {
+    const html = renderDashboard();
+    // Quips and channel names are free text from /api/announce. They are
+    // appended with textContent, so there is no markup path to escape.
+    expect(html).toContain('textContent');
+    expect(html).toMatch(/createElement\('option'\)/);
+  });
+});

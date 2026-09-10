@@ -1,5 +1,20 @@
 {
   "mode": "repost",
+  "announce": {
+    "channelId": "",
+    "quips": [
+      "Someone turned me off. Cheeky bastard.",
+      "What did I miss?!",
+      "Right, who unplugged me?",
+      "Back. Nobody panic.",
+      "That was a nap, not a crash. Big difference.",
+      "Have you tried turning me off and on again? You have. Twice.",
+      "Reboot me again and I'll start leaving your links unfixed.",
+      "Did anyone actually notice I'd gone? Rude either way.",
+      "Miss me? Don't answer that.",
+      "Oh good, you're all still here."
+    ]
+  },
   "twitter": {
     "enabled": true,
     "domain": "fxtwitter.com"
