@@ -425,3 +425,184 @@ describe('I1: request-path errors do not reach the log buffer', () => {
     }
   });
 });
+
+describe('announce routes', () => {
+  function announceDeps(overrides = {}) {
+    let settings = { channelId: '123', quips: ['back'] };
+    return {
+      ...deps,
+      announceStore: {
+        current: () => settings,
+        set: vi.fn((next) => { settings = next; }),
+      },
+      listChannels: vi.fn(() => [{ id: '123', name: 'bots' }]),
+      announceNow: vi.fn(async () => 'sent'),
+      ...overrides,
+    };
+  }
+
+  it('refuses an unauthenticated read', async () => {
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce' }), res, announceDeps());
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('refuses an unauthenticated test', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test' }), res, d);
+    expect(res.statusCode).toBe(401);
+    expect(d.announceNow).not.toHaveBeenCalled();
+  });
+
+  it('reports the settings and the channels it can post in', async () => {
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce', cookie: validCookie() }), res, announceDeps());
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      channelId: '123',
+      quips: ['back'],
+      channels: [{ id: '123', name: 'bots' }],
+    });
+  });
+
+  it('saves a change', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"999","quips":["hi"]}' }),
+      res, d,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(d.announceStore.set).toHaveBeenCalledWith({ channelId: '999', quips: ['hi'] });
+  });
+
+  it('rejects a refused change as a client error', async () => {
+    const d = announceDeps();
+    d.announceStore.set = vi.fn(() => {
+      throw Object.assign(new Error('Channel must be a channel id of digits, or empty for no announcements.'), { code: 'ANNOUNCE_REJECTED' });
+    });
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"nope","quips":[]}' }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  // An untagged error is an I/O fault, not the operator's mistake, and saying
+  // otherwise sends them looking in the wrong place.
+  it('reports an untagged failure as a server error', async () => {
+    const d = announceDeps();
+    d.announceStore.set = vi.fn(() => { throw new Error('ENOENT'); });
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"","quips":[]}' }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(500);
+  });
+
+  it('rejects a malformed body', async () => {
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: 'not json' }),
+      res, announceDeps(),
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  // Correction 1: a body that parses as valid JSON but isn't a plain object
+  // (null, an array) must not fall through to a TypeError on
+  // requested.channelId, which would surface as a 500 for what is really a
+  // client mistake.
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+  ])('rejects a malformed body that is %s', async (_label, body) => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Malformed request.' });
+    expect(d.announceStore.set).not.toHaveBeenCalled();
+  });
+
+  it('posts a quip on demand and returns the outcome', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ result: 'sent' });
+    expect(d.announceNow).toHaveBeenCalled();
+  });
+
+  // Without the button a leaked password buys arbitrary bot text on the next
+  // restart; with it, that text can be fired into any visible channel on
+  // demand. The cooldown is what bounds that, and it has to be server side.
+  it('refuses a second test within the cooldown', async () => {
+    const d = { ...announceDeps(), testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }) };
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), fakeRes(), d);
+
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(429);
+    expect(d.announceNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows another test once the cooldown has passed', async () => {
+    let now = 1000;
+    const d = {
+      ...announceDeps(),
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000, clock: () => now }),
+    };
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), fakeRes(), d);
+
+    now = 1000 + 30001;
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(d.announceNow).toHaveBeenCalledTimes(2);
+  });
+
+  // Correction 3: announceNow() is a later task's wrapper and is not covered
+  // by announce()'s "never throws" contract. A throw there must become a
+  // 500, not an unhandled rejection that takes down the request.
+  it('reports a server error when announceNow throws, without granting a free retry', async () => {
+    const d = announceDeps({
+      announceNow: vi.fn(async () => { throw new Error('discord unreachable'); }),
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }),
+    });
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+    expect(res.statusCode).toBe(500);
+
+    // The cooldown was already spent before announceNow was called, so a
+    // second attempt inside the window is still refused -- a throwing
+    // wrapper must not become a free retry loop.
+    const res2 = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res2, d);
+    expect(res2.statusCode).toBe(429);
+  });
+
+  // Correction 4: the panel starts before the bot logs in, so listChannels()
+  // may throw rather than merely returning []. That must not take down the
+  // whole GET -- the quip editor is exactly what the operator needs while
+  // diagnosing why the bot isn't up.
+  it('falls back to no channels when listChannels throws', async () => {
+    const d = announceDeps({ listChannels: vi.fn(() => { throw new Error('client not ready'); }) });
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ channelId: '123', quips: ['back'], channels: [] });
+  });
+});

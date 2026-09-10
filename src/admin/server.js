@@ -10,6 +10,13 @@ const BODY_LIMIT = 4096;
 // verifySession. 32 chars gives at least 128 bits from a hex secret, more
 // from anything richer.
 const MIN_SESSION_SECRET_LENGTH = 32;
+// One test post per this window. The panel has one legitimate user, so this
+// is not about them: it bounds what a leaked password can do, since the test
+// endpoint turns "arbitrary text on the next restart" into "arbitrary text in
+// any visible channel, now, repeatedly".
+const TEST_ANNOUNCE_COOLDOWN_MS = 30000;
+// A fixed key, because this limit is per-endpoint rather than per-caller.
+const TEST_ANNOUNCE_KEY = 'announce-test';
 
 // Reads at most BODY_LIMIT bytes from the request body, then stops pulling
 // further data from the socket. A login form and a two-key JSON object are
@@ -59,7 +66,8 @@ function html(res, code, body, headers = {}) {
 }
 
 export async function handleRequest(req, res, deps) {
-  const { modeStore, logBuffer, passwordHash, sessionSecret, limiter } = deps;
+  const { modeStore, logBuffer, passwordHash, sessionSecret, limiter, logger = console,
+          announceStore, listChannels, announceNow, testLimiter } = deps;
   const url = new URL(req.url, 'http://localhost');
   const path = url.pathname;
   const signedIn = authenticated(req, sessionSecret);
@@ -148,6 +156,71 @@ export async function handleRequest(req, res, deps) {
     return json(res, 200, { mode: modeStore.current() });
   }
 
+  if (req.method === 'GET' && path === '/api/announce') {
+    let channels;
+    try {
+      // A function, not a list: the panel starts before the bot logs in, and
+      // before then there are no channels to offer. It may also throw
+      // outright at that point (correction 4) rather than just returning an
+      // empty list, and a throw here must not take down the whole GET -- the
+      // quip editor is exactly what the operator needs while diagnosing why
+      // the bot isn't up.
+      channels = listChannels();
+    } catch {
+      channels = [];
+    }
+    return json(res, 200, { ...announceStore.current(), channels }, { 'cache-control': 'no-store' });
+  }
+
+  if (req.method === 'POST' && path === '/api/announce') {
+    let requested;
+    try {
+      requested = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: 'Malformed request.' });
+    }
+    // Correction 1: valid JSON that isn't a plain object (null, an array)
+    // must not fall through to a TypeError on requested.channelId, which
+    // would otherwise surface as a 500 for what is really a client mistake.
+    if (typeof requested !== 'object' || requested === null || Array.isArray(requested)) {
+      return json(res, 400, { error: 'Malformed request.' });
+    }
+    try {
+      announceStore.set({ channelId: requested.channelId, quips: requested.quips });
+    } catch (error) {
+      // ANNOUNCE_REJECTED marks the store's own refusals — the operator's
+      // input was wrong. Anything else is an I/O fault and is ours.
+      if (error.code === 'ANNOUNCE_REJECTED') return json(res, 400, { error: error.message });
+      logger.error(`announce settings write failed: ${error.message}`);
+      return json(res, 500, { error: 'Could not save.' });
+    }
+    return json(res, 200, announceStore.current());
+  }
+
+  if (req.method === 'POST' && path === '/api/announce/test') {
+    // createAdminServer always supplies testLimiter (defaulted below), but
+    // handleRequest is exported and called directly by tests that construct
+    // deps by hand and may omit it. Fall back per call rather than in module
+    // scope, so a caller that skips it just gets a fresh, unused limiter
+    // instead of a ReferenceError -- and, unlike a module-level limiter,
+    // this cannot leak state between direct calls that each omit it.
+    const limiterForTest = testLimiter ?? createRateLimiter({ max: 1, windowMs: TEST_ANNOUNCE_COOLDOWN_MS });
+    if (!limiterForTest.allowed(TEST_ANNOUNCE_KEY)) {
+      return json(res, 429, { error: 'Wait a moment before testing again.' });
+    }
+    // fail() is named for the login path it was written for; here it simply
+    // records that the one call this window allows has been spent -- before
+    // announceNow() is even called, so a throwing wrapper does not become a
+    // free retry loop (correction 3).
+    limiterForTest.fail(TEST_ANNOUNCE_KEY);
+    try {
+      return json(res, 200, { result: await announceNow() });
+    } catch (error) {
+      logger.error(`announce test post failed: ${error.message}`);
+      return json(res, 500, { error: 'Could not post.' });
+    }
+  }
+
   return json(res, 404, { error: 'Not found.' });
 }
 
@@ -171,7 +244,11 @@ export function createAdminServer(deps) {
   // the latter lets an explicit `limiter: undefined` in deps silently win over the
   // default (object spread always applies every own key from the source, including
   // ones whose value is undefined), crashing the first /login POST.
-  const withLimiter = { ...deps, limiter: deps.limiter ?? createRateLimiter() };
+  const withLimiter = {
+    ...deps,
+    limiter: deps.limiter ?? createRateLimiter(),
+    testLimiter: deps.testLimiter ?? createRateLimiter({ max: 1, windowMs: TEST_ANNOUNCE_COOLDOWN_MS }),
+  };
   const server = createServer((req, res) => {
     handleRequest(req, res, withLimiter).catch((error) => {
       // Deliberately the base console, not the buffer-attached `logger`:
