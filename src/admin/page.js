@@ -26,7 +26,10 @@ export function renderLogin(error = '') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in</title>
 <style>
-  :root { color-scheme: light dark; }
+  /* light, not "light dark": every surface below is a hardcoded light
+     palette, so letting the UA render form controls dark gave white
+     button text on the white backgrounds set here. */
+  :root { color-scheme: light; }
   body {
     font-family: system-ui, sans-serif;
     display: flex;
@@ -35,9 +38,11 @@ export function renderLogin(error = '') {
     min-height: 100vh;
     margin: 0;
     background: #f4f4f5;
+    color: #18181b;
   }
   form {
     background: #fff;
+    color: #18181b;
     padding: 2rem;
     border-radius: 8px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
@@ -52,6 +57,8 @@ export function renderLogin(error = '') {
     font-size: 1rem;
     border: 1px solid #ccc;
     border-radius: 4px;
+    background: #fff;
+    color: #18181b;
   }
   button {
     padding: 0.5rem;
@@ -85,7 +92,10 @@ export function renderDashboard() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin panel</title>
 <style>
-  :root { color-scheme: light dark; }
+  /* light, not "light dark": every surface below is a hardcoded light
+     palette, so letting the UA render form controls dark gave white
+     button text on the white backgrounds set here. */
+  :root { color-scheme: light; }
   body {
     font-family: system-ui, sans-serif;
     margin: 0;
@@ -103,6 +113,7 @@ export function renderDashboard() {
   main { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }
   section {
     background: #fff;
+    color: #18181b;
     border-radius: 8px;
     padding: 1rem 1.25rem;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
@@ -126,6 +137,7 @@ export function renderDashboard() {
     border: 1px solid #d4d4d8;
     border-radius: 4px;
     background: #fff;
+    color: #18181b;
     cursor: pointer;
   }
   .empty { color: #71717a; font-size: 0.85rem; }
@@ -137,6 +149,7 @@ export function renderDashboard() {
     border: 1px solid #d4d4d8;
     border-radius: 4px;
     background: #fff;
+    color: #18181b;
   }
   .quips { list-style: none; margin: 0.75rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
   .quips li {
@@ -157,6 +170,8 @@ export function renderDashboard() {
     font-size: 0.9rem;
     border: 1px solid #d4d4d8;
     border-radius: 4px;
+    background: #fff;
+    color: #18181b;
   }
   .announce-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
   section button {
@@ -165,6 +180,7 @@ export function renderDashboard() {
     border: 1px solid #d4d4d8;
     border-radius: 4px;
     background: #fff;
+    color: #18181b;
     cursor: pointer;
   }
   section button:disabled { opacity: 0.6; cursor: not-allowed; }
