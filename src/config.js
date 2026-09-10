@@ -4,7 +4,68 @@ import { PLATFORMS, DEFAULT_DOMAINS } from './rules.js';
 export const MODES = ['repost', 'suppress'];
 const DEFAULT_MODE = 'repost';
 
+export const MAX_QUIP_LENGTH = 2000;
+export const MAX_QUIPS = 50;
+
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+
+// The five rules an announce settings object must satisfy, shared by the
+// config loader (Boot time, from config.json) and the admin panel's store
+// (write time, from a request body). One copy so the two can never drift:
+// if the store's rules ever went looser than the loader's, a panel save
+// would write a config that the next restart's loadConfig rejects -- the
+// panel would brick the bot's boot, and the only symptom is a container
+// that will not come up.
+//
+// Strict and un-defaulting: undefined is not valid input here, only a
+// resolved `{ channelId, quips }`. Returns null when valid, or a problem
+// string naming the offending field and value.
+export function validateAnnounce({ channelId, quips }) {
+  // Digits only: the panel always supplies a real id from its dropdown, so
+  // there is no channel name to resolve and nothing to guess at.
+  if (typeof channelId !== 'string' || (channelId !== '' && !/^\d+$/.test(channelId))) {
+    return `Invalid "announce.channelId": expected a channel id of digits, or "" for none, got ${JSON.stringify(channelId)}.`;
+  }
+
+  if (!Array.isArray(quips)) {
+    return `Invalid "announce.quips": expected an array of strings, got ${JSON.stringify(quips)}.`;
+  }
+  if (quips.length > MAX_QUIPS) {
+    return `Too many entries in "announce.quips": at most ${MAX_QUIPS}, got ${quips.length}.`;
+  }
+  for (const quip of quips) {
+    if (typeof quip !== 'string' || quip.trim().length === 0) {
+      return `Invalid entry in "announce.quips": expected a non-empty string, got ${JSON.stringify(quip)}.`;
+    }
+    // Report the length, never the quip itself -- a 2001-character error
+    // message is unreadable, and the content adds nothing the length doesn't.
+    if (quip.length > MAX_QUIP_LENGTH) {
+      return `An entry in "announce.quips" is longer than ${MAX_QUIP_LENGTH} characters (${quip.length}), which Discord will not accept.`;
+    }
+  }
+
+  return null;
+}
+
+// The restart quips and the channel they go to. Free text set through a
+// password-gated web page, so every rule here is enforced at startup rather
+// than trusted: a malformed value is fatal, exactly like a bad domain.
+function resolveAnnounce(raw, file) {
+  if (raw === undefined) return { channelId: '', quips: [] };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`Invalid "announce" in ${file}: expected an object, got ${JSON.stringify(raw)}.`);
+  }
+
+  const channelId = raw.channelId !== undefined ? raw.channelId : '';
+  const quips = raw.quips !== undefined ? raw.quips : [];
+
+  const problem = validateAnnounce({ channelId, quips });
+  if (problem) {
+    throw new Error(`${problem} (in ${file})`);
+  }
+
+  return { channelId, quips };
+}
 
 export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   const token = env.DISCORD_TOKEN;
@@ -25,7 +86,7 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   for (const key of Object.keys(raw)) {
-    if (key === 'mode') continue;
+    if (key === 'mode' || key === 'announce') continue;
     if (!PLATFORMS.includes(key)) {
       throw new Error(`Unknown platform "${key}" in ${file}. Known platforms: ${PLATFORMS.join(', ')}.`);
     }
@@ -57,8 +118,9 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   const { mode, modeSource } = resolveMode(raw.mode, env, file);
+  const announce = resolveAnnounce(raw.announce, file);
 
-  return { token, mode, modeSource, platforms };
+  return { token, mode, modeSource, platforms, announce };
 }
 
 function envDomain(env, platform) {

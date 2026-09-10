@@ -1,5 +1,7 @@
-import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Partials, PermissionFlagsBits } from 'discord.js';
 import { loadConfig } from './config.js';
+import { announce } from './announce.js';
+import { createAnnounceStore } from './admin/announce-store.js';
 import { createWebhookCache } from './webhooks.js';
 import { handleMessage } from './bot.js';
 import { createLogBuffer } from './logbuffer.js';
@@ -36,6 +38,61 @@ const modeStore = createModeStore({
   file: configFile,
 });
 
+// Same file as the mode store, for the same reason: a quip added in the panel
+// has to survive the restart it exists to announce.
+const announceStore = createAnnounceStore({
+  channelId: config.announce.channelId,
+  quips: config.announce.quips,
+  file: configFile,
+});
+
+// A function rather than a list: the admin server starts before the bot logs
+// in, and an empty list then is the honest answer.
+//
+// Written as a loop rather than filter().map().sort() so that one malformed
+// entry in the channel cache costs that channel and nothing else. A throw out
+// of the predicate would escape the whole filter, and the route's guard in
+// src/admin/server.js would turn that into an empty dropdown with no
+// explanation at all — the worst possible failure for the one control the
+// operator is trying to use.
+function listChannels() {
+  if (!client.isReady()) return [];
+  const postable = [];
+  for (const channel of client.channels.cache.values()) {
+    try {
+      if (!channel?.isTextBased?.() || channel.isDMBased?.()) continue;
+      // A channel with no string name would throw in the sort below, taking
+      // the list with it. Also nothing sensible to show in the dropdown.
+      if (typeof channel.name !== 'string') continue;
+      // `.has?.()`, not `.has()`: the optional chains before it guard the
+      // permissions object being nullish, not the method being absent on a
+      // partial or otherwise odd cache entry.
+      if (!channel.permissionsFor?.(client.user)?.has?.(PermissionFlagsBits.SendMessages)) continue;
+      postable.push({ id: channel.id, name: channel.name });
+    } catch {
+      // Skip this channel, keep the rest.
+    }
+  }
+  return postable.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Reads the store, not the boot-time config: the panel may have changed both
+// the channel and the quips since startup.
+//
+// The readiness check belongs here rather than in announce(), whose six
+// outcomes are documented and heavily tested. Without it, a Test pressed
+// before login reaches channels.fetch with no token, which rejects with
+// "Expected token to be set for this request, but none was present" and
+// announce() reports 'channel-missing' -- the panel then blames the channel
+// for what is really "the bot has not logged in yet", during exactly the
+// window the channel dropdown already warns about. It also spends the
+// 30-second test cooldown on an attempt that could never have worked.
+function announceNow() {
+  if (!client.isReady()) return Promise.resolve('not-ready');
+  const { channelId, quips } = announceStore.current();
+  return announce(channelId, quips, { client, logger });
+}
+
 // Unset OR EMPTY SESSION_SECRET means sessions do not survive a restart.
 // `||`, not `??`: `??` only falls through on null/undefined, and an .env
 // line left as `SESSION_SECRET=` -- easy to end up with by uncommenting
@@ -51,6 +108,9 @@ const admin = createAdminServer({
   passwordHash: process.env.ADMIN_PASSWORD_HASH,
   sessionSecret,
   logger,
+  announceStore,
+  listChannels,
+  announceNow,
 });
 if (admin) {
   const port = Number(process.env.ADMIN_PORT ?? 3000);
@@ -92,6 +152,20 @@ client.once(Events.ClientReady, (ready) => {
     .join(', ');
   logger.info(`Logged in as ${ready.user.tag} in ${config.mode} mode (from ${config.modeSource}). Rewriting: ${enabled || 'nothing'}`);
   startMirrorChecks();
+
+  // Every restart speaks. A crash loop that gets past login will repeat this
+  // until someone notices; a failed login exits before reaching here.
+  //
+  // announce() is contractually non-throwing, but this sits in an event
+  // handler where a rejection nobody awaits is noise at best, so the catch
+  // costs a line and removes the question.
+  announceNow().then((result) => {
+    if (result !== 'sent' && result !== 'no-channel') {
+      logger.warn(`Restart announcement not posted: ${result}.`);
+    }
+  }).catch((error) => {
+    logger.error(`Restart announcement threw: ${error?.stack ?? error}`);
+  });
 });
 
 // These mirrors are volunteer-run and die without notice — four died in a

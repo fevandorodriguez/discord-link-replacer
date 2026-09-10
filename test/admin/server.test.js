@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -29,14 +30,17 @@ function fakeRes() {
   };
 }
 
+// A real Readable, not a hand-rolled async iterator: readBody consumes the
+// request with stream events (it must not break out of a for-await, which
+// would destroy the socket and lose the response), and a fake that only
+// implements Symbol.asyncIterator would test a code path production never
+// takes.
 function fakeReq({ method = 'GET', url = '/', cookie, body = '' } = {}) {
-  const req = {
-    method,
-    url,
-    headers: cookie ? { cookie } : {},
-    socket: { remoteAddress: '1.2.3.4' },
-    async *[Symbol.asyncIterator]() { yield Buffer.from(body); },
-  };
+  const req = Readable.from([Buffer.from(body)]);
+  req.method = method;
+  req.url = url;
+  req.headers = cookie ? { cookie } : {};
+  req.socket = { remoteAddress: '1.2.3.4' };
   return req;
 }
 
@@ -380,6 +384,45 @@ describe('createAdminServer', () => {
       server.close();
     }
   });
+
+  // Fix round 1: handleRequest used to fall back to a brand-new
+  // createRateLimiter() whenever deps.testLimiter was missing. Because a
+  // limiter's failure list lives in a per-instance closure, "fresh every
+  // call" is indistinguishable from "no rate limit at all" -- and no test
+  // drove the announce routes through createAdminServer itself, so deleting
+  // its one line of production wiring for this control (`testLimiter:
+  // deps.testLimiter ?? createRateLimiter(...)`) left the whole suite green.
+  // This test builds deps with no testLimiter at all, so it can only pass if
+  // createAdminServer's own default actually constructs a limiter and
+  // reuses that same instance across requests, the way it does in
+  // production.
+  it('enforces the test-announce cooldown for real, through createAdminServer', async () => {
+    const server = createAdminServer({
+      ...deps,
+      announceStore: { current: () => ({ channelId: '123', quips: ['back'] }), set: vi.fn() },
+      listChannels: () => [{ id: '123', name: 'bots' }],
+      announceNow: vi.fn(async () => 'sent'),
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const cookie = `session=${signSession(Date.now() + 60000, SECRET)}`;
+
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/api/announce/test`, {
+        method: 'POST',
+        headers: { cookie },
+      });
+      expect(first.status).toBe(200);
+
+      const second = await fetch(`http://127.0.0.1:${port}/api/announce/test`, {
+        method: 'POST',
+        headers: { cookie },
+      });
+      expect(second.status).toBe(429);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe('I1: request-path errors do not reach the log buffer', () => {
@@ -423,5 +466,301 @@ describe('I1: request-path errors do not reach the log buffer', () => {
       consoleSpy.mockRestore();
       server.close();
     }
+  });
+});
+
+describe('announce routes', () => {
+  function announceDeps(overrides = {}) {
+    let settings = { channelId: '123', quips: ['back'] };
+    return {
+      ...deps,
+      announceStore: {
+        current: () => settings,
+        set: vi.fn((next) => { settings = next; }),
+      },
+      listChannels: vi.fn(() => [{ id: '123', name: 'bots' }]),
+      announceNow: vi.fn(async () => 'sent'),
+      // A real limiter, not a fallback in production code: handleRequest
+      // requires testLimiter (no default -- see server.js), so any deps
+      // helper that calls it directly must supply one itself, same as
+      // createAdminServer does for real traffic.
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }),
+      ...overrides,
+    };
+  }
+
+  it('refuses an unauthenticated read', async () => {
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce' }), res, announceDeps());
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('refuses an unauthenticated test', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test' }), res, d);
+    expect(res.statusCode).toBe(401);
+    expect(d.announceNow).not.toHaveBeenCalled();
+  });
+
+  it('reports the settings and the channels it can post in', async () => {
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce', cookie: validCookie() }), res, announceDeps());
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      channelId: '123',
+      quips: ['back'],
+      channels: [{ id: '123', name: 'bots' }],
+    });
+  });
+
+  it('saves a change', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"999","quips":["hi"]}' }),
+      res, d,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(d.announceStore.set).toHaveBeenCalledWith({ channelId: '999', quips: ['hi'] });
+  });
+
+  it('rejects a refused change as a client error', async () => {
+    const d = announceDeps();
+    d.announceStore.set = vi.fn(() => {
+      throw Object.assign(new Error('Channel must be a channel id of digits, or empty for no announcements.'), { code: 'ANNOUNCE_REJECTED' });
+    });
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"nope","quips":[]}' }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  // An untagged error is an I/O fault, not the operator's mistake, and saying
+  // otherwise sends them looking in the wrong place.
+  it('reports an untagged failure as a server error', async () => {
+    const d = announceDeps();
+    d.announceStore.set = vi.fn(() => { throw new Error('ENOENT'); });
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: '{"channelId":"","quips":[]}' }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(500);
+  });
+
+  it('rejects a malformed body', async () => {
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body: 'not json' }),
+      res, announceDeps(),
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  // Correction 1: a body that parses as valid JSON but isn't a plain object
+  // (null, an array) must not fall through to a TypeError on
+  // requested.channelId, which would surface as a 500 for what is really a
+  // client mistake.
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+  ])('rejects a malformed body that is %s', async (_label, body) => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(
+      fakeReq({ method: 'POST', url: '/api/announce', cookie: validCookie(), body }),
+      res, d,
+    );
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Malformed request.' });
+    expect(d.announceStore.set).not.toHaveBeenCalled();
+  });
+
+  it('posts a quip on demand and returns the outcome', async () => {
+    const d = announceDeps();
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ result: 'sent' });
+    expect(d.announceNow).toHaveBeenCalled();
+  });
+
+  // Without the button a leaked password buys arbitrary bot text on the next
+  // restart; with it, that text can be fired into any visible channel on
+  // demand. The cooldown is what bounds that, and it has to be server side.
+  it('refuses a second test within the cooldown', async () => {
+    const d = { ...announceDeps(), testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }) };
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), fakeRes(), d);
+
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(429);
+    expect(d.announceNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows another test once the cooldown has passed', async () => {
+    let now = 1000;
+    const d = {
+      ...announceDeps(),
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000, clock: () => now }),
+    };
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), fakeRes(), d);
+
+    now = 1000 + 30001;
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(d.announceNow).toHaveBeenCalledTimes(2);
+  });
+
+  // Correction 3: announceNow() is a later task's wrapper and is not covered
+  // by announce()'s "never throws" contract. A throw there must become a
+  // 500, not an unhandled rejection that takes down the request.
+  it('reports a server error when announceNow throws, without granting a free retry', async () => {
+    const d = announceDeps({
+      announceNow: vi.fn(async () => { throw new Error('discord unreachable'); }),
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }),
+    });
+    const res = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res, d);
+    expect(res.statusCode).toBe(500);
+
+    // The cooldown was already spent before announceNow was called, so a
+    // second attempt inside the window is still refused -- a throwing
+    // wrapper must not become a free retry loop.
+    const res2 = fakeRes();
+    await handleRequest(fakeReq({ method: 'POST', url: '/api/announce/test', cookie: validCookie() }), res2, d);
+    expect(res2.statusCode).toBe(429);
+  });
+
+  // Correction 4: the panel starts before the bot logs in, so listChannels()
+  // may throw rather than merely returning []. That must not take down the
+  // whole GET -- the quip editor is exactly what the operator needs while
+  // diagnosing why the bot isn't up.
+  it('falls back to no channels when listChannels throws', async () => {
+    const d = announceDeps({ listChannels: vi.fn(() => { throw new Error('client not ready'); }) });
+    const res = fakeRes();
+    await handleRequest(fakeReq({ url: '/api/announce', cookie: validCookie() }), res, d);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ channelId: '123', quips: ['back'], channels: [] });
+  });
+});
+
+// The body limit was sized for a login form and a two-key JSON object, then
+// inherited by POST /api/announce, whose documented payload is 50 quips of
+// 2000 characters. Every legal save above ~4KB died as a socket reset with no
+// HTTP response at all, which the panel could only report as "Could not reach
+// the server." These go over real HTTP because that is the only place the
+// bug was visible: the handler "returned fine" in every unit test.
+describe('request body limits', () => {
+  const MAX_QUIPS = 50;
+  const MAX_QUIP_LENGTH = 2000;
+
+  function announceServer(overrides = {}) {
+    return createAdminServer({
+      ...deps,
+      announceStore: {
+        current: () => ({ channelId: '123', quips: [] }),
+        set: vi.fn(),
+      },
+      listChannels: () => [],
+      announceNow: vi.fn(async () => 'sent'),
+      ...overrides,
+    });
+  }
+
+  async function withServer(server, run) {
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      return await run(server.address().port);
+    } finally {
+      server.close();
+    }
+  }
+
+  it('accepts a quip list at the documented maximum size', async () => {
+    const set = vi.fn();
+    const quips = Array.from({ length: MAX_QUIPS }, () => 'q'.repeat(MAX_QUIP_LENGTH));
+    await withServer(announceServer({
+      announceStore: { current: () => ({ channelId: '123', quips }), set },
+    }), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ channelId: '123', quips }),
+      });
+      expect(response.status).toBe(200);
+      expect(set).toHaveBeenCalledWith({ channelId: '123', quips });
+    });
+  });
+
+  // 3 quips of 2000 characters -- well inside the documented cap, and one of
+  // the sizes that reproduced the reset.
+  it('accepts a modest quip list that the old 4KB limit already killed', async () => {
+    const quips = ['a'.repeat(2000), 'b'.repeat(2000), 'c'.repeat(2000)];
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ channelId: '123', quips }),
+      });
+      expect(response.status).toBe(200);
+    });
+  });
+
+  // The point of the fix is not a bigger number, it is that the client gets
+  // an answer. A body past the route's limit must come back as a real 413
+  // with a JSON error the panel can print -- not a destroyed socket.
+  it('answers an oversized quip list with a 413 the client can read', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        // Comfortably past any limit derived from 50 x 2000.
+        body: JSON.stringify({ channelId: '123', quips: ['x'.repeat(2 * 1024 * 1024)] }),
+      });
+      expect(response.status).toBe(413);
+      const body = await response.json();
+      expect(typeof body.error).toBe('string');
+      // Useful to an operator: it must name the actual caps.
+      expect(body.error).toContain(String(MAX_QUIPS));
+      expect(body.error).toContain(String(MAX_QUIP_LENGTH));
+    });
+  });
+
+  // The other routes stay tight: /api/mode is a two-key object and has no
+  // business accepting hundreds of kilobytes. It must still answer, though.
+  it('keeps the small limit on /api/mode and answers 413 rather than resetting', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/mode`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'repost', padding: 'p'.repeat(8192) }),
+      });
+      expect(response.status).toBe(413);
+      expect(typeof (await response.json()).error).toBe('string');
+    });
+  });
+
+  // /login is a form post, so its oversized answer is the login page rather
+  // than JSON -- but it is still an answer.
+  it('answers an oversized login post with the login page', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/login`, {
+        method: 'POST',
+        body: `password=${'x'.repeat(8192)}`,
+      });
+      expect(response.status).toBe(413);
+      expect(await response.text()).toContain('type="password"');
+    });
   });
 });

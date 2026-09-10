@@ -129,6 +129,48 @@ export function renderDashboard() {
     cursor: pointer;
   }
   .empty { color: #71717a; font-size: 0.85rem; }
+  .field { display: block; font-size: 0.85rem; color: #52525b; margin-bottom: 0.25rem; }
+  select {
+    width: 100%;
+    padding: 0.4rem;
+    font-size: 0.9rem;
+    border: 1px solid #d4d4d8;
+    border-radius: 4px;
+    background: #fff;
+  }
+  .quips { list-style: none; margin: 0.75rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .quips li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    border-bottom: 1px solid #e4e4e7;
+    padding-bottom: 0.35rem;
+  }
+  .quips li.empty { border-bottom: none; }
+  .announce-add { display: flex; gap: 0.5rem; }
+  .announce-add input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.4rem;
+    font-size: 0.9rem;
+    border: 1px solid #d4d4d8;
+    border-radius: 4px;
+  }
+  .announce-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
+  section button {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.9rem;
+    border: 1px solid #d4d4d8;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+  }
+  section button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .announce-note { font-size: 0.85rem; color: #3f3f46; margin: 0.5rem 0 0; }
+  .unsaved { font-size: 0.85rem; color: #b45309; margin: 0.5rem 0 0; }
+  .hint { font-size: 0.8rem; color: #71717a; margin: 0.5rem 0 0; }
 </style>
 </head>
 <body>
@@ -146,6 +188,24 @@ export function renderDashboard() {
     <div id="mode-status"></div>
   </section>
   <section>
+    <h2>Restart announcement</h2>
+    <label class="field" for="announce-channel">Channel</label>
+    <select id="announce-channel"><option value="">No announcements</option></select>
+    <p class="hint" id="announce-channel-hint" hidden></p>
+    <ul class="quips" id="announce-quips"></ul>
+    <div class="announce-add">
+      <input type="text" id="announce-quip" placeholder="Add a quip" maxlength="2000">
+      <button type="button" id="announce-add">Add</button>
+    </div>
+    <div class="announce-actions">
+      <button type="button" id="announce-save">Save</button>
+      <button type="button" id="announce-test">Test</button>
+    </div>
+    <p class="hint">Test posts one of the <em>saved</em> quips straight away, at most once every 30 seconds.</p>
+    <p class="unsaved" id="announce-unsaved" hidden>Unsaved changes. Press Save.</p>
+    <div id="announce-status"></div>
+  </section>
+  <section>
     <h2>Recent activity</h2>
     <div id="activity"><p class="empty">Loading…</p></div>
   </section>
@@ -155,6 +215,37 @@ export function renderDashboard() {
   var modesEl = document.getElementById('modes');
   var statusEl = document.getElementById('mode-status');
   var activityEl = document.getElementById('activity');
+  var channelEl = document.getElementById('announce-channel');
+  var channelHintEl = document.getElementById('announce-channel-hint');
+  var quipsEl = document.getElementById('announce-quips');
+  var quipInputEl = document.getElementById('announce-quip');
+  var announceStatusEl = document.getElementById('announce-status');
+  var unsavedEl = document.getElementById('announce-unsaved');
+  var addQuipEl = document.getElementById('announce-add');
+  var saveAnnounceEl = document.getElementById('announce-save');
+  var testAnnounceEl = document.getElementById('announce-test');
+
+  // The working copy of the quip list. Edits live here and nothing reaches
+  // config.json until Save posts the whole { channelId, quips } object, so a
+  // half-finished edit can be abandoned by reloading the page.
+  var quips = [];
+
+  // Every outcome the test endpoint can return, as a sentence. Anything not in
+  // here is a bug rather than a state the operator can act on, so it is
+  // reported verbatim instead of being flattened into a friendly lie.
+  //
+  // 'not-ready' is the wrapper's, not announce()'s: the panel is up before the
+  // bot has logged in, and a test in that window used to come back as
+  // 'channel-missing' — blaming the channel for a missing Discord session.
+  var TEST_RESULTS = {
+    'sent': 'Posted.',
+    'no-channel': 'Pick a channel first.',
+    'no-quips': 'Add a quip first.',
+    'not-ready': 'The bot is still starting and has not logged in to Discord yet. Wait a moment and try again.',
+    'channel-missing': 'The bot cannot see that channel.',
+    'not-postable': 'The bot cannot post there.',
+    'failed': 'Discord rejected it.'
+  };
 
   function escapeHtml(value) {
     return String(value)
@@ -163,6 +254,23 @@ export function renderDashboard() {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // text() and a guarded parse, never res.json(): a refusal that isn't JSON
+  // makes res.json() throw, so the whole chain lands in the caller's catch
+  // and reports that the server could not be reached. It plainly could -- it
+  // answered. The likeliest such refusal is not even ours: Caddy sits in
+  // front of this and answers its own limits with an HTML error page.
+  function readResult(res) {
+    return res.text().then(function (text) {
+      var body = {};
+      try {
+        body = JSON.parse(text) || {};
+      } catch (e) {
+        body = {};
+      }
+      return { ok: res.ok, status: res.status, body: body };
+    });
   }
 
   function renderModes(state) {
@@ -224,13 +332,9 @@ export function renderDashboard() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode: mode }),
-    }).then(function (res) {
-      return res.json().then(function (body) {
-        return { ok: res.ok, body: body };
-      });
-    }).then(function (result) {
+    }).then(readResult).then(function (result) {
       if (!result.ok) {
-        statusEl.innerHTML = '<p class="mode-error">' + escapeHtml(result.body.error || 'Could not change mode.') + '</p>';
+        statusEl.innerHTML = '<p class="mode-error">' + escapeHtml(result.body.error || ('The server refused the change (HTTP ' + result.status + ').')) + '</p>';
       }
       refresh();
     }).catch(function () {
@@ -238,8 +342,187 @@ export function renderDashboard() {
     });
   }
 
+  // Quips and channel names are free text: a quip is whatever was typed into
+  // the box below, and a forum or voice channel name allows far more than the
+  // lowercase-and-dashes a text channel is limited to. Everything below builds
+  // nodes and assigns textContent rather than concatenating markup, so there
+  // is no escaping to forget — note that the escapeHtml above is a *second*
+  // copy of the module-level one and only the in-script copy is in scope here.
+  // The unsaved marker gets its own element, not the status line. They answer
+  // different questions -- "is the server holding what you see?" versus "what
+  // happened just now?" -- and routing both through one element means the
+  // first is destroyed by the second at the worst possible moment: press Test
+  // with edits pending and "Unsaved changes" is replaced by "Posted.", which
+  // reads as confirmation that the quip you just added is the one that went
+  // out. It isn't; Test posts what was last saved. Both facts now sit on
+  // screen together.
+  function setUnsaved(unsaved) {
+    unsavedEl.hidden = !unsaved;
+  }
+
+  function setAnnounceStatus(text, kind) {
+    announceStatusEl.textContent = '';
+    if (!text) return;
+    var line = document.createElement('p');
+    line.className = kind === 'error' ? 'mode-error' : 'announce-note';
+    line.textContent = text;
+    announceStatusEl.appendChild(line);
+  }
+
+  function renderQuips() {
+    quipsEl.textContent = '';
+    if (!quips.length) {
+      var none = document.createElement('li');
+      none.className = 'empty';
+      none.textContent = 'No quips yet — the bot stays quiet on restart until there is at least one.';
+      quipsEl.appendChild(none);
+      return;
+    }
+    quips.forEach(function (quip, index) {
+      var row = document.createElement('li');
+      var text = document.createElement('span');
+      text.textContent = quip;
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', function () {
+        quips.splice(index, 1);
+        renderQuips();
+        setUnsaved(true);
+      });
+      row.appendChild(text);
+      row.appendChild(remove);
+      quipsEl.appendChild(row);
+    });
+  }
+
+  function renderChannels(channels, channelId) {
+    channelEl.textContent = '';
+    var none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'No announcements';
+    channelEl.appendChild(none);
+
+    var found = false;
+    channels.forEach(function (channel) {
+      var option = document.createElement('option');
+      option.value = channel.id;
+      option.textContent = '#' + channel.name;
+      channelEl.appendChild(option);
+      if (channel.id === channelId) found = true;
+    });
+
+    // A saved channel the bot can no longer see (renamed guild, revoked
+    // permission, bot not logged in yet) would otherwise silently snap the
+    // dropdown back to "No announcements", and the next Save would quietly
+    // throw the setting away.
+    if (channelId && !found) {
+      var missing = document.createElement('option');
+      missing.value = channelId;
+      missing.textContent = 'Channel ' + channelId + ' (not visible to the bot)';
+      channelEl.appendChild(missing);
+    }
+    channelEl.value = channelId || '';
+
+    channelHintEl.hidden = channels.length > 0;
+    if (!channels.length) {
+      channelHintEl.textContent = 'No channels to offer yet — the panel starts before the bot logs in. Reload once it is up.';
+    }
+  }
+
+  // Loaded once, not on the 5s tick: re-fetching would overwrite whatever the
+  // operator is halfway through typing.
+  function loadAnnounce() {
+    fetch('/api/announce').then(function (res) {
+      if (res.status === 401) {
+        window.location.href = '/';
+        return null;
+      }
+      return res.json();
+    }).then(function (data) {
+      if (!data) return;
+      quips = (data.quips || []).slice();
+      renderChannels(data.channels || [], data.channelId || '');
+      renderQuips();
+      // What is on screen is exactly what the server holds.
+      setUnsaved(false);
+    }).catch(function () {
+      setAnnounceStatus('Could not load the announcement settings.', 'error');
+    });
+  }
+
+  function addQuip() {
+    var text = quipInputEl.value.trim();
+    if (!text) return;
+    quips.push(text);
+    quipInputEl.value = '';
+    renderQuips();
+    setUnsaved(true);
+  }
+
+  function saveAnnounce() {
+    saveAnnounceEl.disabled = true;
+    fetch('/api/announce', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channelId: channelEl.value, quips: quips }),
+    }).then(readResult).then(function (result) {
+      if (!result.ok) {
+        setAnnounceStatus(result.body.error || ('The server refused the save (HTTP ' + result.status + ').'), 'error');
+        return;
+      }
+      // Redraw from what the server stored rather than from the local list:
+      // the two agreeing is the point of pressing Save.
+      quips = (result.body.quips || []).slice();
+      channelEl.value = result.body.channelId || '';
+      renderQuips();
+      // Cleared only on success: a rejected save leaves the edits pending and
+      // the marker standing, which is the truth of the situation.
+      setUnsaved(false);
+      setAnnounceStatus('Saved.');
+    }).catch(function () {
+      setAnnounceStatus('Could not reach the server.', 'error');
+    }).then(function () {
+      saveAnnounceEl.disabled = false;
+    });
+  }
+
+  // The 30-second server-side cooldown is the real guard; disabling the button
+  // only stops a double-click turning into a wasted 429.
+  function testAnnounce() {
+    testAnnounceEl.disabled = true;
+    setAnnounceStatus('Testing…');
+    fetch('/api/announce/test', { method: 'POST' }).then(readResult).then(function (result) {
+      if (!result.ok) {
+        setAnnounceStatus(result.body.error || ('The server refused the test (HTTP ' + result.status + ').'), 'error');
+        return;
+      }
+      var outcome = result.body.result;
+      var sentence = TEST_RESULTS[outcome] || ('Unexpected result: ' + outcome + '.');
+      setAnnounceStatus(sentence, outcome === 'sent' ? 'note' : 'error');
+    }).catch(function () {
+      setAnnounceStatus('Could not reach the server.', 'error');
+    }).then(function () {
+      testAnnounceEl.disabled = false;
+    });
+  }
+
+  channelEl.addEventListener('change', function () {
+    setUnsaved(true);
+  });
+  addQuipEl.addEventListener('click', addQuip);
+  quipInputEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addQuip();
+    }
+  });
+  saveAnnounceEl.addEventListener('click', saveAnnounce);
+  testAnnounceEl.addEventListener('click', testAnnounce);
+
   refresh();
   setInterval(refresh, 5000);
+  loadAnnounce();
 })();
 </script>
 </body>
