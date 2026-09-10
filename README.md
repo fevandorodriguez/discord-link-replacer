@@ -374,9 +374,29 @@ host, so the panel is reachable only through Caddy):
 
 ```
 discord.fev.space {
+	log
+	request_body {
+		max_size 1MB
+	}
 	reverse_proxy link-replacer:3000
 }
 ```
+
+`request_body` bounds what an anonymous caller can stream at the panel:
+without it, a POST of any size is read in full before the app's 401 ever
+reaches the client (measured — 5 MB sent, 5 MB read). With it the upload
+is cut at roughly the limit.
+
+**The size is not arbitrary and must not be lowered casually.** Save
+posts the *whole* quip list, so a legitimate save can reach ~600 KB (50
+quips × 2000 characters, JSON-escaped). The app enforces its own
+`ANNOUNCE_BODY_LIMIT` of 604,246 bytes, derived in
+`src/admin/server.js` from `MAX_QUIPS` and `MAX_QUIP_LENGTH`. Caddy's
+limit has to stay comfortably **above** that number, or Caddy will reject
+a save the app would have accepted and the "50 quips of 2000 characters"
+promise above becomes false. Note `1MB` adapts to 1,000,000 bytes, not
+1,048,576. If you ever raise the quip caps, raise this too — it does not
+follow automatically.
 
 **Adding this block requires reloading Caddy**, and this Caddy instance
 fronts around ten other, unrelated live apps on the same box — a reload
