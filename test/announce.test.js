@@ -96,4 +96,22 @@ describe('announce', () => {
     const client = { user: { id: 'bot-1' }, channels: { fetch: () => { throw new Error('boom'); } } };
     await expect(announce('chan-1', QUIPS, { client, logger: silentLogger })).resolves.toBe('channel-missing');
   });
+
+  it('clamps a negative pick index to first quip', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => -5 });
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({ content: 'first' }));
+  });
+
+  it('clamps a past-the-end pick index to last quip', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => 10 });
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({ content: 'third' }));
+  });
+
+  it('floors a fractional pick index then clamps', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => 1.9 });
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({ content: 'second' }));
+  });
 });
