@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, unlinkSync, statSync, chmodSync } from 'node:fs';
+import { updateConfig } from '../config-writer.js';
 import { MODES } from '../config.js';
 
 // Describes a rejected `next` value for the error message below without
@@ -55,57 +55,7 @@ export function createModeStore({ mode, modeSource, file }) {
         throw error;
       }
 
-      let raw;
-      try {
-        raw = JSON.parse(readFileSync(file, 'utf8'));
-      } catch (e) {
-        // Let I/O and parse errors propagate untagged
-        throw e;
-      }
-
-      // Config root must be a plain object, not array, null, or primitive.
-      // Setting a property on a non-object makes set() silently diverge from
-      // the file, reproducing the exact failure this module exists to prevent.
-      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-        const rootType = raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw;
-        const error = new Error(
-          `Config root in ${file} must be a JSON object, got ${rootType}.`,
-        );
-        error.code = 'MODE_REJECTED';
-        throw error;
-      }
-
-      raw.mode = next;
-
-      // Atomic write: write to temp file, then rename. Protects against
-      // corruption if the process crashes mid-write.
-      // Preserve the target's file mode if it exists; a first-ever write
-      // lands under the default umask, which is the intended behavior.
-      const tempFile = `${file}.tmp`;
-      try {
-        writeFileSync(tempFile, `${JSON.stringify(raw, null, 2)}\n`);
-        // Stat the target to preserve its mode. If the target doesn't exist,
-        // stat throws and we skip the chmod (first-ever write uses default umask).
-        try {
-          const stat = statSync(file);
-          chmodSync(tempFile, stat.mode);
-        } catch (e) {
-          // Target doesn't exist yet; temp file uses default umask. Anything
-          // other than "doesn't exist" (a permissions error mid-stat, say)
-          // is a real failure and must not be swallowed as if it were the
-          // ordinary first-write case.
-          if (e.code !== 'ENOENT') throw e;
-        }
-        renameSync(tempFile, file);
-      } catch (e) {
-        // Clean up temp file if anything failed
-        try {
-          unlinkSync(tempFile);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw e;
-      }
+      updateConfig(file, (raw) => { raw.mode = next; }, { rejectCode: 'MODE_REJECTED' });
 
       current = next;
       // The file write just succeeded, so the mode this store now holds
