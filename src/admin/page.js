@@ -230,13 +230,18 @@ export function renderDashboard() {
   // half-finished edit can be abandoned by reloading the page.
   var quips = [];
 
-  // Every outcome announce() can return, as a sentence. Anything not in here
-  // is a bug rather than a state the operator can act on, so it is reported
-  // verbatim instead of being flattened into a friendly lie.
+  // Every outcome the test endpoint can return, as a sentence. Anything not in
+  // here is a bug rather than a state the operator can act on, so it is
+  // reported verbatim instead of being flattened into a friendly lie.
+  //
+  // 'not-ready' is the wrapper's, not announce()'s: the panel is up before the
+  // bot has logged in, and a test in that window used to come back as
+  // 'channel-missing' — blaming the channel for a missing Discord session.
   var TEST_RESULTS = {
     'sent': 'Posted.',
     'no-channel': 'Pick a channel first.',
     'no-quips': 'Add a quip first.',
+    'not-ready': 'The bot is still starting and has not logged in to Discord yet. Wait a moment and try again.',
     'channel-missing': 'The bot cannot see that channel.',
     'not-postable': 'The bot cannot post there.',
     'failed': 'Discord rejected it.'

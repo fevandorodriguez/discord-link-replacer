@@ -70,6 +70,16 @@ describe('dashboard — announcements', () => {
     expect(html).toContain('Discord rejected it');
   });
 
+  it('has a sentence for a test pressed before the bot has logged in', () => {
+    const html = renderDashboard();
+    // Pressing Test before login used to answer 'channel-missing' -> "The bot
+    // cannot see that channel", blaming the channel for what is really "there
+    // is no logged-in client yet". announceNow() now short-circuits with its
+    // own outcome, and the panel has to name the real cause.
+    expect(html).toContain(`'not-ready'`);
+    expect(html).toMatch(/not-ready'\s*:\s*'[^']*still starting[^']*'/);
+  });
+
   it('keeps the unsaved-changes marker out of the transient status line', () => {
     const html = renderDashboard();
     // Its own element, hidden until there is something to warn about.

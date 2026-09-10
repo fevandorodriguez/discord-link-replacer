@@ -78,7 +78,17 @@ function listChannels() {
 
 // Reads the store, not the boot-time config: the panel may have changed both
 // the channel and the quips since startup.
+//
+// The readiness check belongs here rather than in announce(), whose six
+// outcomes are documented and heavily tested. Without it, a Test pressed
+// before login reaches channels.fetch with no token, which rejects with
+// "Expected token to be set for this request, but none was present" and
+// announce() reports 'channel-missing' -- the panel then blames the channel
+// for what is really "the bot has not logged in yet", during exactly the
+// window the channel dropdown already warns about. It also spends the
+// 30-second test cooldown on an attempt that could never have worked.
 function announceNow() {
+  if (!client.isReady()) return Promise.resolve('not-ready');
   const { channelId, quips } = announceStore.current();
   return announce(channelId, quips, { client, logger });
 }
