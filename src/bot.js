@@ -47,7 +47,7 @@ export function ignoreReason(message, botUserId, mode) {
   return null;
 }
 
-export async function handleMessage(message, { mode, platforms, webhooks, logger }) {
+export async function handleMessage(message, { mode, platforms, webhooks, logger, echoes }) {
   const reason = ignoreReason(message, message.client?.user?.id, mode);
   if (reason) return reason;
 
@@ -55,5 +55,5 @@ export async function handleMessage(message, { mode, platforms, webhooks, logger
   if (!changed) return 'unchanged';
 
   const deliver = mode === 'suppress' ? suppressDeliver : repostDeliver;
-  return deliver(message, content, { webhooks, logger });
+  return deliver(message, content, { webhooks, logger, echoes });
 }

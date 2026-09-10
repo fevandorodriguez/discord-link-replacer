@@ -4,7 +4,26 @@ services:
     container_name: link-replacer
     restart: unless-stopped
     env_file: .env
-    # config.json is also COPYed into the image, but bind-mounting it means an
-    # edit takes effect on `docker compose restart` rather than a rebuild.
+    # A directory mount, not a single-file mount. Bind-mounting config.json
+    # itself (the old layout) makes that path its own mount point, and
+    # rename() onto a mount point returns EBUSY on Linux -- the admin
+    # panel's atomic write-then-rename of config.json failed every time.
+    # Not :ro either, since that same toggle needs to write here; the
+    # Dockerfile chowns this directory to the "node" user for exactly that
+    # reason. ./data/config.json must exist on the host before the first
+    # `docker compose up` -- see README's Running section -- otherwise
+    # this mount hides the image's own default and the bot fails to start
+    # with a missing-config error.
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./data:/app/data
+    # No published port: the admin panel is reached only via Caddy, over the
+    # shared `monkey` network. `default` keeps the container able to reach
+    # anything else it already depended on.
+    networks:
+      - default
+      - monkey
+
+networks:
+  monkey:
+    external: true
+    name: monkey_default

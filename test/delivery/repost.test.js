@@ -212,3 +212,60 @@ describe('deliver', () => {
     expect(await deliver(message, 'https://fxtwitter.com/jack/status/20', deps())).toBe('replaced');
   });
 });
+
+describe('recording the echo for undo', () => {
+  function recorder() {
+    return { record: vi.fn(() => true) };
+  }
+
+  it('records the posted message against its original author', async () => {
+    const echoes = recorder();
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn(async () => {}) });
+
+    await deliver(message, 'https://fxtwitter.com/a/status/1', { ...deps(), echoes });
+
+    expect(echoes.record).toHaveBeenCalledWith('new-1', { authorId: 'user-1' });
+  });
+
+  // Repost deletes the original, so there is nothing left to restore — an
+  // undo here removes the content entirely, by design.
+  it('records no original to restore', async () => {
+    const echoes = recorder();
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn(async () => {}) });
+
+    await deliver(message, 'https://fxtwitter.com/a/status/1', { ...deps(), echoes });
+
+    expect(echoes.record.mock.calls[0][1].originalId).toBeUndefined();
+  });
+
+  it('records nothing when the send failed', async () => {
+    const echoes = recorder();
+    const send = vi.fn(async () => { throw new Error('boom'); });
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn() });
+    const d = deps({ webhooks: { get: vi.fn(async () => ({ send })), invalidate: vi.fn() } });
+
+    await deliver(message, 'x', { ...d, echoes });
+
+    expect(echoes.record).not.toHaveBeenCalled();
+  });
+
+  it('records the retry’s message when the first webhook was stale', async () => {
+    const echoes = recorder();
+    const stale = Object.assign(new Error('gone'), { code: 10015 });
+    const send = vi.fn(async () => { throw stale; });
+    const freshSend = vi.fn(async () => ({ id: 'fresh-1' }));
+    const get = vi.fn()
+      .mockResolvedValueOnce({ send })
+      .mockResolvedValueOnce({ send: freshSend });
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn(async () => {}) });
+
+    await deliver(message, 'x', { ...deps({ webhooks: { get, invalidate: vi.fn() } }), echoes });
+
+    expect(echoes.record).toHaveBeenCalledWith('fresh-1', { authorId: 'user-1' });
+  });
+
+  it('delivers normally when no recorder is supplied', async () => {
+    const message = fakeMessage({ member: fakeMember(), delete: vi.fn(async () => {}) });
+    expect(await deliver(message, 'x', deps())).toBe('replaced');
+  });
+});

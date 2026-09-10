@@ -185,8 +185,8 @@ function fakeMember() {
 const PLATFORMS_ON = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
   instagram: { enabled: true, domain: 'oginstagram.com' },
-  tiktok: { enabled: true, domain: 'vxtiktok.com' },
-  reddit: { enabled: true, domain: 'rxddit.com' },
+  tiktok: { enabled: true, domain: 'tnktok.com' },
+  reddit: { enabled: true, domain: 'vxreddit.com' },
   bluesky: { enabled: true, domain: 'fxbsky.app' },
 };
 
@@ -241,8 +241,8 @@ describe('handleMessage — mode dispatch', () => {
   const PLATFORMS_ON = {
     twitter: { enabled: true, domain: 'fxtwitter.com' },
     instagram: { enabled: true, domain: 'oginstagram.com' },
-    tiktok: { enabled: true, domain: 'vxtiktok.com' },
-    reddit: { enabled: true, domain: 'rxddit.com' },
+    tiktok: { enabled: true, domain: 'tnktok.com' },
+    reddit: { enabled: true, domain: 'vxreddit.com' },
     bluesky: { enabled: true, domain: 'fxbsky.app' },
   };
   const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -328,5 +328,36 @@ describe('handleMessage — mode dispatch', () => {
     expect(webhooks.get).not.toHaveBeenCalled();
     expect(message.delete).not.toHaveBeenCalled();
     expect(message.suppressEmbeds).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleMessage — undo recorder', () => {
+  const PLATFORMS_FOR_UNDO = {
+    twitter: { enabled: true, domain: 'fxtwitter.com' },
+    instagram: { enabled: true, domain: 'oginstagram.com' },
+    tiktok: { enabled: true, domain: 'tnktok.com' },
+    reddit: { enabled: true, domain: 'vxreddit.com' },
+    bluesky: { enabled: true, domain: 'fxbsky.app' },
+  };
+  const quiet = { info: () => {}, warn: () => {}, error: () => {} };
+
+  // Without this the echo is never recorded and the undo silently does
+  // nothing — a wiring gap no delivery-module test can see.
+  it('hands the recorder to the delivery strategy', async () => {
+    const echoes = { record: vi.fn(() => true) };
+    const message = fakeMessage({
+      member: { displayName: 'Mike', displayAvatarURL: () => 'https://cdn/a.png' },
+      suppressEmbeds: vi.fn(async () => {}),
+      reply: vi.fn(async () => ({ id: 'reply-1' })),
+    });
+
+    await handleMessage(message, {
+      mode: 'suppress', platforms: PLATFORMS_FOR_UNDO, webhooks: { get: vi.fn() }, logger: quiet, echoes,
+    });
+
+    expect(echoes.record).toHaveBeenCalledWith('reply-1', {
+      authorId: 'user-1',
+      originalId: 'msg-1',
+    });
   });
 });

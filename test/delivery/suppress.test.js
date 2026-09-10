@@ -64,3 +64,44 @@ describe('suppress delivery', () => {
     expect(message.delete).not.toHaveBeenCalled();
   });
 });
+
+describe('recording the echo for undo', () => {
+  const withAuthor = (overrides = {}) => fakeMessage({
+    author: { id: 'user-1' },
+    reply: vi.fn(async () => ({ id: 'reply-1' })),
+    ...overrides,
+  });
+
+  it('records the reply against its original author', async () => {
+    const echoes = { record: vi.fn(() => true) };
+    await deliver(withAuthor(), 'https://fxtwitter.com/a/status/1', { logger: silentLogger, echoes });
+
+    expect(echoes.record).toHaveBeenCalledWith('reply-1', {
+      authorId: 'user-1',
+      originalId: 'msg-1',
+    });
+  });
+
+  it('records nothing when the reply failed', async () => {
+    const echoes = { record: vi.fn(() => true) };
+    const message = withAuthor({ reply: vi.fn(async () => { throw new Error('boom'); }) });
+
+    await deliver(message, 'x', { logger: silentLogger, echoes });
+
+    expect(echoes.record).not.toHaveBeenCalled();
+  });
+
+  // The reply exists and can still be taken back, so a failed suppression
+  // must not cost the author their undo.
+  it('still records when only the suppression failed', async () => {
+    const echoes = { record: vi.fn(() => true) };
+    const message = withAuthor({ suppressEmbeds: vi.fn(async () => { throw new Error('no permission'); }) });
+
+    expect(await deliver(message, 'x', { logger: silentLogger, echoes })).toBe('suppressed');
+    expect(echoes.record).toHaveBeenCalled();
+  });
+
+  it('delivers normally when no recorder is supplied', async () => {
+    expect(await deliver(withAuthor(), 'x', { logger: silentLogger })).toBe('suppressed');
+  });
+});

@@ -10,8 +10,8 @@ describe('rule table', () => {
     expect(DEFAULT_DOMAINS).toEqual({
       twitter: 'fxtwitter.com',
       instagram: 'oginstagram.com',
-      tiktok: 'vxtiktok.com',
-      reddit: 'rxddit.com',
+      tiktok: 'tnktok.com',
+      reddit: 'vxreddit.com',
       bluesky: 'fxbsky.app',
     });
   });

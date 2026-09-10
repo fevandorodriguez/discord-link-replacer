@@ -2,16 +2,23 @@
 // immutable. But with Manage Messages it can strip the message's embed, which
 // is enough: the author's text stays exactly as written and the working embed
 // arrives in a reply.
-export async function deliver(message, content, { logger }) {
+export async function deliver(message, content, { logger, echoes }) {
+  let reply;
   try {
     // parse: [] keeps mentions rendering without re-notifying anyone the
     // original already pinged; repliedUser: false stops the reply pinging
     // the author about their own link.
-    await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
+    reply = await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
   } catch (error) {
     logger.error(`reply failed in ${message.channel.id}: ${error.message}`);
     return 'send-failed';
   }
+
+  // Recorded before the suppression is attempted, so a suppression that fails
+  // does not also cost the author their undo. The original's id goes with it:
+  // unlike repost, the message it belongs to still exists and its embed can
+  // be given back.
+  if (reply?.id) echoes?.record(reply.id, { authorId: message.author.id, originalId: message.id });
 
   // Reply first, suppress second. Suppressing before a confirmed reply could
   // strip the author's embed and then give nothing back.

@@ -35,7 +35,7 @@ const STALE_WEBHOOK_ERRORS = new Set([
   50027, // Invalid Webhook Token
 ]);
 
-export async function deliver(message, content, { webhooks, logger }) {
+export async function deliver(message, content, { webhooks, logger, echoes }) {
   const payload = buildPayload(message, content);
 
   let webhook;
@@ -57,8 +57,11 @@ export async function deliver(message, content, { webhooks, logger }) {
     return 'send-failed';
   }
 
+  // Whichever send succeeds, its message is what the author can later take
+  // back, so the id has to survive the retry branch rather than be discarded.
+  let sent;
   try {
-    await webhook.send(payload);
+    sent = await webhook.send(payload);
   } catch (error) {
     if (!STALE_WEBHOOK_ERRORS.has(error.code)) {
       logger.error(`webhook send failed in ${message.channel.id}: ${error.message}`);
@@ -68,12 +71,16 @@ export async function deliver(message, content, { webhooks, logger }) {
     webhooks.invalidate(message.channel);
     try {
       const fresh = await webhooks.get(message.channel);
-      await fresh.send(payload);
+      sent = await fresh.send(payload);
     } catch (retryError) {
       logger.error(`webhook send retry failed in ${message.channel.id}: ${retryError.message}`);
       return 'send-failed';
     }
   }
+
+  // No original is recorded: the message below is about to be deleted, so an
+  // undo here removes the content rather than restoring anything.
+  if (sent?.id) echoes?.record(sent.id, { authorId: message.author.id });
 
   // Reachable only once a webhook.send() above has resolved: every failing
   // path returns before here. This is the sole message.delete() call site,

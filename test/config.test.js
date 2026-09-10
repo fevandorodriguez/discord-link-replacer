@@ -10,8 +10,8 @@ let file;
 const VALID = {
   twitter: { enabled: true, domain: 'fxtwitter.com' },
   instagram: { enabled: true, domain: 'oginstagram.com' },
-  tiktok: { enabled: true, domain: 'vxtiktok.com' },
-  reddit: { enabled: true, domain: 'rxddit.com' },
+  tiktok: { enabled: true, domain: 'tnktok.com' },
+  reddit: { enabled: true, domain: 'vxreddit.com' },
   bluesky: { enabled: true, domain: 'fxbsky.app' },
 };
 
@@ -81,7 +81,7 @@ describe('loadConfig', () => {
   });
 
   it('lets an env var enable a platform disabled in the file', () => {
-    write({ ...VALID, tiktok: { enabled: false, domain: 'vxtiktok.com' } });
+    write({ ...VALID, tiktok: { enabled: false, domain: 'tnktok.com' } });
     const config = loadConfig({
       file,
       env: { DISCORD_TOKEN: 'abc', LINKFIX_TIKTOK_ENABLED: 'TRUE' },
@@ -99,7 +99,7 @@ describe('loadConfig — enabled must be a real boolean', () => {
   ])('throws when enabled is %s rather than a boolean', (_label, value) => {
     // "enabled": "false" is a truthy string: silently leaving the platform on
     // is the exact opposite of what the operator asked for.
-    write({ ...VALID, tiktok: { enabled: value, domain: 'vxtiktok.com' } });
+    write({ ...VALID, tiktok: { enabled: value, domain: 'tnktok.com' } });
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }))
       .toThrow(/enabled.*tiktok/i);
   });
@@ -212,5 +212,23 @@ describe('loadConfig — modeSource', () => {
     const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
     expect(config.mode).toBe('repost');
     expect(config.modeSource).toBe('default');
+  });
+});
+
+describe('loadConfig — mirror canary', () => {
+  it('carries a canary path through to the platform entry', () => {
+    write({ ...VALID, reddit: { enabled: true, domain: 'vxreddit.com', canary: '/r/x/comments/abc/t/' } });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.platforms.reddit.canary).toBe('/r/x/comments/abc/t/');
+  });
+
+  it('leaves canary undefined when none is set', () => {
+    write(VALID);
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).platforms.twitter.canary).toBeUndefined();
+  });
+
+  it.each([42, true, {}, 'no-leading-slash'])('rejects the invalid canary %s', (bad) => {
+    write({ ...VALID, reddit: { enabled: true, domain: 'vxreddit.com', canary: bad } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/canary/i);
   });
 });

@@ -2,7 +2,7 @@
 
 A Discord bot that rewrites links to X/Twitter, Instagram, TikTok, Reddit
 and Bluesky into mirror-domain equivalents (`fxtwitter.com`,
-`oginstagram.com`, `vxtiktok.com`, `rxddit.com`, `fxbsky.app`) that produce
+`oginstagram.com`, `tnktok.com`, `vxreddit.com`, `fxbsky.app`) that produce
 working Discord embeds — inline video, real thumbnails — where the native
 links show nothing useful. When it sees a rewritable link it reposts the
 fixed message through a channel webhook wearing the original author's name
@@ -47,8 +47,8 @@ Per-platform settings live in `config.json`:
 |---|---|---|
 | twitter | true | `fxtwitter.com` |
 | instagram | true | `oginstagram.com` |
-| tiktok | true | `vxtiktok.com` |
-| reddit | true | `rxddit.com` |
+| tiktok | true | `tnktok.com` |
+| reddit | true | `vxreddit.com` |
 | bluesky | true | `fxbsky.app` |
 
 Each platform can be overridden from the environment without editing the
@@ -68,33 +68,71 @@ These mirror domains are volunteer-run, third-party infrastructure — they
 go down or change hands periodically. When one does, swap it with an
 env override (or edit `config.json`) and restart; no code change needed.
 
-Instagram mirrors tested 2026-09-01, so a swap is a choice rather than a
-guess:
+### Mirrors in use
 
-| Mirror | Behaviour |
+Every one of these was verified by fetching a real post and reading the
+response body, not by checking the status code — two mirrors died while
+still answering HTTP 200 with an error page, which is exactly what a status
+check misses.
+
+| Platform | Mirror | Why this one |
+|---|---|---|
+| twitter | `fxtwitter.com` | Stable throughout; the reference implementation of the pattern. |
+| instagram | `oginstagram.com` | Sets `og:url` back to the original post, so the embed title links to Instagram. Serves 403 to datacenter IPs, so it cannot be probed with `curl` from a VPS — irrelevant to the bot, which never fetches a mirror. |
+| tiktok | `tnktok.com` | fxTikTok. Handles `/video/` and `/photo/` slideshows, and serves `og:image` from its own CDN. |
+| reddit | `vxreddit.com` | Serves `og:image` straight from `i.redd.it` rather than proxying through a third party. |
+| bluesky | `fxbsky.app` | Stable throughout. |
+
+### Tested alternates
+
+Working, but second choice — each proxies media through a third-party
+rewrite host rather than the platform's own CDN:
+
+| Platform | Alternate | Note |
+|---|---|---|
+| instagram | `toinstagram.com`, `uuinstagram.com` | InstaFix family. Set `og:url` correctly; serve a *relative* `og:video`, which embeds less reliably. |
+| instagram | `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
+| tiktok | `fixtiktok.com` | Works; routes through a `workers.dev` subdomain. |
+| reddit | `redditez.com` | Works; proxies through `embedez.com`. |
+
+### Known dead
+
+Kept here so nobody re-tries them:
+
+| Mirror | State |
 |---|---|
-| `oginstagram.com` | In use. Verified working in Discord. Note it serves 403 to datacenter IPs, so it cannot be probed with `curl` from a VPS — that does not affect the bot, which never fetches the mirror itself. |
-| `uuinstagram.com` | Works, including reels, though reels can be slow to appear. Sets `og:url` to the original post; album index via path. Serves a relative `og:video` URL. |
-| `toinstagram.com` | Same InstaFix family as `uuinstagram`, with the same relative `og:video`. The natural fallback. |
-| `instagirlcock.com` | Also sets `og:url`, with an absolute `og:image`, full attribution and the caption. Functionally the strongest tested; the domain name is the problem. |
-| `instagram7.com` | Absolute `og:image` and attribution, but no `og:url`, and rendered poorly in practice. |
-| `kkinstagram.com` | Serves no OpenGraph tags at all and sends people to `kkclip.com`. |
-| `ddinstagram.com`, `fxinstagram.com` | Dead — no DNS record and a parked IP respectively. |
+| `vxtiktok.com` | Taken down by a legal request. Serves the notice at **HTTP 200**. |
+| `rxddit.com` | Reddit is actively blocking it via API changes. Front page looks healthy; every real post returns a block notice. |
+| `ddinstagram.com` | No DNS record. |
+| `fxinstagram.com` | Resolves to a parked IP; connections time out. |
+| `kkinstagram.com` | Serves no OpenGraph tags and redirects people to `kkclip.com`. |
 | `instagramez.com` | **Avoid.** Redirects through an advertising network. |
 
-`/share/` links could not be verified against any mirror: a made-up share
-code returns 404 everywhere, so testing needs a real one. If share links
-stop embedding after a mirror swap, that is the first thing to check.
+### Swapping one
 
-No mirror restores likes or view counts on the original post; engagement
-needs an authenticated action on Instagram's own clients, so any embed
-fixer is a dead end for that by construction.
+A dead mirror is a config change, not a code change — `LINKFIX_<PLATFORM>_DOMAIN`
+in `.env` (then `docker compose up -d`), or the `domain` field in
+`data/config.json` (then `docker compose restart`).
 
-Under Docker Compose, `config.json` is bind-mounted read-only from the
-project directory, so editing it and running `docker compose restart`
-picks the change up — no rebuild. (The file is also baked into the image
-by the `Dockerfile`, so a container run without that mount uses the
-copy from build time.)
+The bot checks every configured mirror on boot and once a day, and warns
+in the log and the admin panel when one looks broken. A platform may also
+set a `canary` path — a real post — because a mirror blocked at the API
+serves a perfectly healthy front page; `rxddit` did exactly that.
+
+Two caveats worth knowing. `/share/` links have never been verified against
+any Instagram mirror: a made-up share code returns 404 everywhere, so
+testing needs a real one, and that is the first thing to check if share
+links stop embedding after a swap. And no mirror restores likes or view
+counts on the original post — engagement needs an authenticated action on
+the platform's own clients, so any embed fixer is a dead end for that by
+construction.
+
+Under Docker Compose, the whole `data/` directory (not `config.json`
+itself — see Running below for why) is bind-mounted read-write from the
+project directory, so editing `data/config.json` and running
+`docker compose restart` picks the change up — no rebuild. (A default
+`config.json` is also baked into the image by the `Dockerfile`, so a
+container run without that mount uses the copy from build time.)
 
 ## Delivery modes
 
@@ -153,6 +191,50 @@ Suppress mode's limits:
   (which wears the author's name and avatar via the webhook), the
   suppress-mode reply is visibly the bot's own message.
 
+## Taking back an echo
+
+React with 🌠 on the bot's version of your own message, within an hour of it
+being posted, and the bot removes it.
+
+Only the person the echo was posted on behalf of can do this. Anyone else who
+reacts has their reaction quietly removed — it appears and then vanishes,
+which is the only feedback available. Reactions cannot carry a private reply:
+that needs an interaction (a slash command or a button), and a reaction is not
+one. The alternative would have been a public message in the channel or a DM,
+both worse for a mis-click.
+
+What "removed" means depends on the mode:
+
+| Mode | Effect |
+|---|---|
+| `repost` | The echo is deleted. The original was already deleted when it was posted, so the content is gone. Final, with no confirmation step. |
+| `suppress` | The original's embed is restored **first**, then the bot's reply is deleted — fully back to how it was. |
+
+That ordering is deliberate and matches the reply-before-suppress rule: if the
+restore succeeds and the delete then fails you get an untidy duplicate, whereas
+deleting first and failing to restore would leave the author with a stripped
+embed and no fixed link — worse off than if the bot had never touched it.
+
+The bot does not add the reaction itself. It would otherwise sit on every
+rewritten message forever for an action that is almost never used, and a
+non-author clicking a visible affordance and getting silence reads as broken.
+The cost is that nobody discovers the gesture without being told.
+
+**No new permission is needed.** This uses the `GuildMessageReactions` intent,
+which is not privileged, so there is no Developer Portal change — and removing
+a stray reaction uses Manage Messages, which the bot already has.
+
+Limits worth knowing:
+
+- **A restart forgets every pending undo.** Echoes posted before it can no
+  longer be taken back. Same trade as the activity log: nothing is persisted.
+- Once the hour is up, an expired echo is indistinguishable from any other
+  message, so a late reaction simply sits there.
+- The bot never touches this emoji on messages it did not post.
+- Exact emoji only — 🌠, not ⭐, ✨ or 🌟.
+- If the delete fails, the undo is spent: the entry is consumed when claimed,
+  so a double reaction cannot delete twice. The failure is logged.
+
 ## Running
 
 Locally:
@@ -173,10 +255,57 @@ token — or an invalid one, or Message Content left disabled in the
 Developer Portal — makes the process print a readable error and exit 1
 rather than starting up broken or crash-looping silently.
 
-Compose mounts `./config.json` into the container read-only, so a
-`config.json` change (mirror domains, per-platform enable/disable, `mode`
-when it's not overridden by `LINKFIX_MODE`) needs only
-`docker compose restart` — that rereads the file, no rebuild.
+Compose mounts `./data` (not `./config.json` directly) into the container
+at `/app/data`, read-write, and the container is pointed at
+`/app/data/config.json` via `LINKFIX_CONFIG_FILE` (set in the
+`Dockerfile`). Edit `data/config.json` on the host — that's the live file
+now, the same one the admin panel's mode toggle writes to — and
+`docker compose restart` picks up a hand edit (mirror domains,
+per-platform enable/disable, `mode` when it's not overridden by
+`LINKFIX_MODE`) with no rebuild, exactly as before.
+
+This is a directory mount rather than a single-file mount so the admin
+panel can write to it: bind-mounting one file makes that path its own
+mount point, and on Linux `rename()` onto a mount point fails with EBUSY,
+which broke the panel's atomic write-then-rename on every mode change
+under the old single-file layout. **`data/config.json` must exist in the
+project directory before the first `docker compose up`** — the repo ships
+one, so a normal `git clone`/`git pull` already has it, but if you ever
+delete it, recreate it (e.g. `cp config.json data/config.json`) before
+starting the container, or the bind mount hides the image's own default
+and `loadConfig` fails with a readable "file not found" error rather than
+starting broken.
+
+**The host directory must be writable by the container's user, and the
+Dockerfile cannot do this for you.** The image runs as `node`, uid 1000,
+and the `Dockerfile` does `chown` `/app/data` — but a bind mount replaces
+that directory at runtime, and permission checks then use the *host*
+inode's ownership, so the image-time `chown` has no effect. On a host
+where the project sits under a root-owned path (`/opt/<app>`, say),
+`./data` is `root:root` and uid 1000 cannot write to it: the panel's mode
+toggle fails with `EACCES` before it ever reaches the rename, and the API
+reports it as a 500. Set it once, on the host:
+
+```bash
+chown -R 1000:1000 ./data
+```
+
+Match the numeric uid, not a name — the container's `node` is uid 1000
+regardless of what user 1000 is called on the host.
+
+**Upgrading from the old single-file layout?** If you previously ran with
+`./config.json:/app/config.json:ro` in `compose.yml`, copy your live,
+hand-edited file across before the first `docker compose up -d` on the new
+layout:
+
+```bash
+cp config.json data/config.json
+chown -R 1000:1000 data
+```
+
+Without this, `data/config.json` starts at the repo's committed defaults
+while your customised root `config.json` sits unread beside it — mirror
+domains you swapped and a hand-set `mode` revert silently, with no error.
 
 An `.env` change — **including `LINKFIX_MODE`** — is different: `restart`
 stops and starts the *existing* container, and environment loaded via
@@ -191,6 +320,95 @@ image.
 If `docker compose up -d` ever reports the container as already up to
 date and you're not seeing the change, add `--force-recreate` to force
 it: `docker compose up -d --force-recreate`.
+
+## Admin panel
+
+A small password-gated page, served from inside the bot process at
+`discord.fev.space`, that shows recent delivery activity and lets you
+switch between `repost` and `suppress` without touching the server. It
+never shows a message or a rewritten link — but it is not limited to a
+channel name and a level either: an entry can include the channel ID, the
+message ID, the bot's own Discord tag, the platform config, Discord API
+error text, and a full stack trace when something failed. Size what a
+leaked panel password costs you accordingly; see Limits below.
+
+### Enabling it
+
+The panel does not start unless `ADMIN_PASSWORD_HASH` is set. Generate
+one with:
+
+```bash
+npm run hash-password -- "your password"
+```
+
+and put the result in `.env` as `ADMIN_PASSWORD_HASH`. **This is
+deliberate fail-closed behaviour**: an unset or malformed hash means no
+panel, logged as a warning, rather than a panel with a guessable or
+absent password. The bot itself is unaffected either way.
+
+`SESSION_SECRET` is optional. If it's unset — or set but empty, which
+`.env.example` deliberately avoids by shipping the line commented out
+rather than as `SESSION_SECRET=` — a random secret is generated at process
+start, which means every session (i.e. every signed-in browser) is
+invalidated on restart and you'll need to sign in again. Set
+`SESSION_SECRET` to a fixed value of **at least 32 characters** in `.env`
+if you'd rather sessions survive a restart. Unlike unset, an explicit
+value that's too short is **not** filled in for you: the panel logs a
+warning and refuses to start at all, the same fail-closed handling as a
+missing `ADMIN_PASSWORD_HASH` — a short secret is brute-forceable, and a
+forged session cookie is a full bypass of the password gate, so this
+never falls back to "start anyway."
+
+Because these are `.env` values, changing either of them needs
+`docker compose up -d` (not `restart`) to take effect — see the env vs.
+config.json vs. code distinction under Running above; it applies here
+too. `ADMIN_PASSWORD_HASH`, `SESSION_SECRET` and `ADMIN_PORT` are all
+`.env` values.
+
+### Caddy
+
+Point a subdomain at the container over the internal `monkey` network
+(see `compose.yml` — the container joins it but publishes no port to the
+host, so the panel is reachable only through Caddy):
+
+```
+discord.fev.space {
+	reverse_proxy link-replacer:3000
+}
+```
+
+**Adding this block requires reloading Caddy**, and this Caddy instance
+fronts around ten other, unrelated live apps on the same box — a reload
+affects all of them, not just this one. Treat it accordingly.
+
+The `3000` above must match `ADMIN_PORT` (default 3000 if unset) — if you
+set `ADMIN_PORT` in `.env`, update this block to the same port and reload
+Caddy, or the proxy silently points at the wrong port and the panel
+becomes unreachable through Caddy even though the container itself is
+fine.
+
+### Limits
+
+- **The login rate limiter is global, not per visitor.** The container
+  sits behind Caddy, so every request's socket address is Caddy's own,
+  not the actual visitor's — the limiter cannot tell requests apart by
+  origin, so it counts failures for everyone in one shared bucket. Five
+  failed logins from *anyone* (including you, mistyping your own
+  password) locks the panel for fifteen minutes for *everyone*, and
+  because the limiter's state lives only in memory, the one way to clear
+  it early is to restart the container. This is a deliberate trade-off,
+  not an oversight: there is exactly one legitimate user, and an
+  attacker has no way to influence which bucket their attempts land in.
+- **Mode is locked when `LINKFIX_MODE` is set in the environment.** The
+  env var always wins over `config.json` (see Delivery modes above), so
+  when it's set the panel's toggle is disabled and shows which variable
+  to unset to hand control back to the panel. It never silently accepts
+  a change that `LINKFIX_MODE` would then override.
+- **History is memory-only and capped.** Recent activity resets on every
+  restart and only keeps the most recent entries; it is not a
+  persistent audit log.
+- **No attribution.** An entry names the channel and what happened, not
+  which member's message triggered it.
 
 ## Behaviour and limits
 
