@@ -22,7 +22,20 @@ export function createAnnounceStore({ channelId, quips, file }) {
   return {
     current: () => ({ channelId: current.channelId, quips: [...current.quips] }),
 
-    set({ channelId: nextChannel, quips: nextQuips }) {
+    set(input) {
+      // Guard before destructuring: `set(null)` (or no argument at all, i.e.
+      // `set(undefined)`) would otherwise throw a raw TypeError out of the
+      // parameter destructuring itself, before validateAnnounce -- or even
+      // this function's own body -- gets a look. That breaks the store's
+      // stated contract ("throws with error.code = 'ANNOUNCE_REJECTED' on
+      // any invalid input"): unreachable from today's only caller, but a
+      // contract that is nearly true is one a future caller will trust and
+      // be wrong about.
+      if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+        throw reject(`Invalid announce settings: expected an object with channelId and quips, got ${JSON.stringify(input)}.`);
+      }
+      const { channelId: nextChannel, quips: nextQuips } = input;
+
       // Validated before the file is touched -- a rejected request must
       // never leave a half-written config behind.
       const problem = validateAnnounce({ channelId: nextChannel, quips: nextQuips });
