@@ -380,6 +380,45 @@ describe('createAdminServer', () => {
       server.close();
     }
   });
+
+  // Fix round 1: handleRequest used to fall back to a brand-new
+  // createRateLimiter() whenever deps.testLimiter was missing. Because a
+  // limiter's failure list lives in a per-instance closure, "fresh every
+  // call" is indistinguishable from "no rate limit at all" -- and no test
+  // drove the announce routes through createAdminServer itself, so deleting
+  // its one line of production wiring for this control (`testLimiter:
+  // deps.testLimiter ?? createRateLimiter(...)`) left the whole suite green.
+  // This test builds deps with no testLimiter at all, so it can only pass if
+  // createAdminServer's own default actually constructs a limiter and
+  // reuses that same instance across requests, the way it does in
+  // production.
+  it('enforces the test-announce cooldown for real, through createAdminServer', async () => {
+    const server = createAdminServer({
+      ...deps,
+      announceStore: { current: () => ({ channelId: '123', quips: ['back'] }), set: vi.fn() },
+      listChannels: () => [{ id: '123', name: 'bots' }],
+      announceNow: vi.fn(async () => 'sent'),
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const cookie = `session=${signSession(Date.now() + 60000, SECRET)}`;
+
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/api/announce/test`, {
+        method: 'POST',
+        headers: { cookie },
+      });
+      expect(first.status).toBe(200);
+
+      const second = await fetch(`http://127.0.0.1:${port}/api/announce/test`, {
+        method: 'POST',
+        headers: { cookie },
+      });
+      expect(second.status).toBe(429);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe('I1: request-path errors do not reach the log buffer', () => {
@@ -437,6 +476,11 @@ describe('announce routes', () => {
       },
       listChannels: vi.fn(() => [{ id: '123', name: 'bots' }]),
       announceNow: vi.fn(async () => 'sent'),
+      // A real limiter, not a fallback in production code: handleRequest
+      // requires testLimiter (no default -- see server.js), so any deps
+      // helper that calls it directly must supply one itself, same as
+      // createAdminServer does for real traffic.
+      testLimiter: createRateLimiter({ max: 1, windowMs: 30000 }),
       ...overrides,
     };
   }

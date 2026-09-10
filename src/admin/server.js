@@ -198,13 +198,12 @@ export async function handleRequest(req, res, deps) {
   }
 
   if (req.method === 'POST' && path === '/api/announce/test') {
-    // createAdminServer always supplies testLimiter (defaulted below), but
-    // handleRequest is exported and called directly by tests that construct
-    // deps by hand and may omit it. Fall back per call rather than in module
-    // scope, so a caller that skips it just gets a fresh, unused limiter
-    // instead of a ReferenceError -- and, unlike a module-level limiter,
-    // this cannot leak state between direct calls that each omit it.
-    const limiterForTest = testLimiter ?? createRateLimiter({ max: 1, windowMs: TEST_ANNOUNCE_COOLDOWN_MS });
+    // No fallback here: createAdminServer always supplies a persistent
+    // testLimiter, and a caller that omits it (test or otherwise) must fail
+    // loudly rather than silently get a fresh, always-empty limiter that
+    // never blocks anything -- a limiter is a Map in a closure, so "fresh
+    // every call" is indistinguishable from "no rate limit at all".
+    const limiterForTest = testLimiter;
     if (!limiterForTest.allowed(TEST_ANNOUNCE_KEY)) {
       return json(res, 429, { error: 'Wait a moment before testing again.' });
     }
