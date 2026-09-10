@@ -169,6 +169,7 @@ export function renderDashboard() {
   }
   section button:disabled { opacity: 0.6; cursor: not-allowed; }
   .announce-note { font-size: 0.85rem; color: #3f3f46; margin: 0.5rem 0 0; }
+  .unsaved { font-size: 0.85rem; color: #b45309; margin: 0.5rem 0 0; }
   .hint { font-size: 0.8rem; color: #71717a; margin: 0.5rem 0 0; }
 </style>
 </head>
@@ -201,6 +202,7 @@ export function renderDashboard() {
       <button type="button" id="announce-test">Test</button>
     </div>
     <p class="hint">Test posts one of the <em>saved</em> quips straight away, at most once every 30 seconds.</p>
+    <p class="unsaved" id="announce-unsaved" hidden>Unsaved changes. Press Save.</p>
     <div id="announce-status"></div>
   </section>
   <section>
@@ -218,6 +220,7 @@ export function renderDashboard() {
   var quipsEl = document.getElementById('announce-quips');
   var quipInputEl = document.getElementById('announce-quip');
   var announceStatusEl = document.getElementById('announce-status');
+  var unsavedEl = document.getElementById('announce-unsaved');
   var addQuipEl = document.getElementById('announce-add');
   var saveAnnounceEl = document.getElementById('announce-save');
   var testAnnounceEl = document.getElementById('announce-test');
@@ -327,6 +330,18 @@ export function renderDashboard() {
   // nodes and assigns textContent rather than concatenating markup, so there
   // is no escaping to forget — note that the escapeHtml above is a *second*
   // copy of the module-level one and only the in-script copy is in scope here.
+  // The unsaved marker gets its own element, not the status line. They answer
+  // different questions -- "is the server holding what you see?" versus "what
+  // happened just now?" -- and routing both through one element means the
+  // first is destroyed by the second at the worst possible moment: press Test
+  // with edits pending and "Unsaved changes" is replaced by "Posted.", which
+  // reads as confirmation that the quip you just added is the one that went
+  // out. It isn't; Test posts what was last saved. Both facts now sit on
+  // screen together.
+  function setUnsaved(unsaved) {
+    unsavedEl.hidden = !unsaved;
+  }
+
   function setAnnounceStatus(text, kind) {
     announceStatusEl.textContent = '';
     if (!text) return;
@@ -355,7 +370,7 @@ export function renderDashboard() {
       remove.addEventListener('click', function () {
         quips.splice(index, 1);
         renderQuips();
-        setAnnounceStatus('Unsaved changes. Press Save.');
+        setUnsaved(true);
       });
       row.appendChild(text);
       row.appendChild(remove);
@@ -411,6 +426,8 @@ export function renderDashboard() {
       quips = (data.quips || []).slice();
       renderChannels(data.channels || [], data.channelId || '');
       renderQuips();
+      // What is on screen is exactly what the server holds.
+      setUnsaved(false);
     }).catch(function () {
       setAnnounceStatus('Could not load the announcement settings.', 'error');
     });
@@ -422,7 +439,7 @@ export function renderDashboard() {
     quips.push(text);
     quipInputEl.value = '';
     renderQuips();
-    setAnnounceStatus('Unsaved changes. Press Save.');
+    setUnsaved(true);
   }
 
   function saveAnnounce() {
@@ -445,6 +462,9 @@ export function renderDashboard() {
       quips = (result.body.quips || []).slice();
       channelEl.value = result.body.channelId || '';
       renderQuips();
+      // Cleared only on success: a rejected save leaves the edits pending and
+      // the marker standing, which is the truth of the situation.
+      setUnsaved(false);
       setAnnounceStatus('Saved.');
     }).catch(function () {
       setAnnounceStatus('Could not reach the server.', 'error');
@@ -478,7 +498,7 @@ export function renderDashboard() {
   }
 
   channelEl.addEventListener('change', function () {
-    setAnnounceStatus('Unsaved changes. Press Save.');
+    setUnsaved(true);
   });
   addQuipEl.addEventListener('click', addQuip);
   quipInputEl.addEventListener('keydown', function (event) {

@@ -70,6 +70,22 @@ describe('dashboard — announcements', () => {
     expect(html).toContain('Discord rejected it');
   });
 
+  it('keeps the unsaved-changes marker out of the transient status line', () => {
+    const html = renderDashboard();
+    // Its own element, hidden until there is something to warn about.
+    expect(html).toMatch(/<p[^>]*id="announce-unsaved"[^>]*hidden[^>]*>Unsaved changes\. Press Save\.<\/p>/);
+    // Never routed through setAnnounceStatus: Test overwrites that line with
+    // "Testing…" and then the outcome, so putting the marker there means
+    // pressing Test with edits pending replaces "Unsaved changes" with
+    // "Posted." — which reads as confirmation that the pending quip is the
+    // one that went out. It isn't. Both facts must survive together.
+    expect(html).not.toMatch(/setAnnounceStatus\(\s*'Unsaved/);
+    // Shown and cleared, so the marker cannot be permanently hidden (silently
+    // losing the warning) or permanently shown (surviving a successful save).
+    expect(html).toContain('setUnsaved(true)');
+    expect(html).toContain('setUnsaved(false)');
+  });
+
   it('builds quip and channel text as DOM text rather than interpolated markup', () => {
     const html = renderDashboard();
     // Quips and channel names are free text from /api/announce. They are
