@@ -141,3 +141,48 @@ describe('announce', () => {
       .toBe('channel-missing');
   });
 });
+
+// The module's contract is "returns an outcome rather than throwing", with no
+// qualification. Reading error.message on the caught value breaks it for a
+// rejection *value* that is not an object: `throw null` in the fetch made
+// announce() throw a TypeError out of its own catch. discord.js does not
+// reject this way and both call sites are guarded, so this is defensive —
+// but the contract is stated absolutely, so it should hold absolutely.
+describe('announce: a non-object rejection still returns an outcome', () => {
+  it('survives a null rejection from channels.fetch', async () => {
+    const client = {
+      user: { id: 'bot-1' },
+      channels: { fetch: async () => { throw null; } },
+    };
+    expect(await announce('1', QUIPS, { client, logger: silentLogger })).toBe('channel-missing');
+  });
+
+  it('survives a non-object throw from permissionsFor', async () => {
+    const channel = {
+      id: 'chan-1',
+      isTextBased: () => true,
+      permissionsFor: () => { throw 'no permissions cache'; },
+    };
+    expect(await announce('1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger })).toBe('not-postable');
+  });
+
+  it('survives a non-object rejection from send', async () => {
+    const channel = {
+      ...fakeChannel(),
+      send: async () => { throw undefined; },
+    };
+    expect(await announce('1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger })).toBe('failed');
+  });
+
+  // The reason it goes wrong is that the value reaches a logger, so check the
+  // logger still gets something to print rather than "undefined".
+  it('logs the rejection value itself when there is no message', async () => {
+    const warn = vi.fn();
+    const client = {
+      user: { id: 'bot-1' },
+      channels: { fetch: async () => { throw 'Unknown Channel'; } },
+    };
+    await announce('1', QUIPS, { client, logger: { ...silentLogger, warn } });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Unknown Channel'));
+  });
+});
