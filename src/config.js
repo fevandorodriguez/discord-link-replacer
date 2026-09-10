@@ -15,29 +15,29 @@ const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z
 function resolveAnnounce(raw, file) {
   if (raw === undefined) return { channelId: '', quips: [] };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error(`Invalid "announce" in ${file}: expected an object.`);
+    throw new Error(`Invalid "announce" in ${file}: expected an object, got ${JSON.stringify(raw)}.`);
   }
 
-  const channelId = raw.channelId ?? '';
+  const channelId = raw.channelId !== undefined ? raw.channelId : '';
   // Digits only: the panel always supplies a real id from its dropdown, so
   // there is no channel name to resolve and nothing to guess at.
   if (typeof channelId !== 'string' || (channelId !== '' && !/^\d+$/.test(channelId))) {
-    throw new Error(`Invalid "announce.channelId" in ${file}: expected a channel id of digits, or "" for none.`);
+    throw new Error(`Invalid "announce.channelId" in ${file}: expected a channel id of digits, or "" for none, got ${JSON.stringify(channelId)}.`);
   }
 
-  const quips = raw.quips ?? [];
+  const quips = raw.quips !== undefined ? raw.quips : [];
   if (!Array.isArray(quips)) {
-    throw new Error(`Invalid "announce.quips" in ${file}: expected an array of strings.`);
+    throw new Error(`Invalid "announce.quips" in ${file}: expected an array of strings, got ${JSON.stringify(quips)}.`);
   }
   if (quips.length > MAX_QUIPS) {
-    throw new Error(`Too many entries in "announce.quips" in ${file}: at most ${MAX_QUIPS}.`);
+    throw new Error(`Too many entries in "announce.quips" in ${file}: at most ${MAX_QUIPS}, got ${quips.length}.`);
   }
   for (const quip of quips) {
     if (typeof quip !== 'string' || quip.trim().length === 0) {
-      throw new Error(`Invalid entry in "announce.quips" in ${file}: expected a non-empty string.`);
+      throw new Error(`Invalid entry in "announce.quips" in ${file}: expected a non-empty string, got ${JSON.stringify(quip)}.`);
     }
     if (quip.length > MAX_QUIP_LENGTH) {
-      throw new Error(`An entry in "announce.quips" in ${file} is longer than ${MAX_QUIP_LENGTH} characters, which Discord will not accept.`);
+      throw new Error(`An entry in "announce.quips" in ${file} is longer than ${MAX_QUIP_LENGTH} characters (${quip.length}), which Discord will not accept.`);
     }
   }
 

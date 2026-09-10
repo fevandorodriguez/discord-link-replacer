@@ -281,4 +281,26 @@ describe('loadConfig — announce', () => {
     write({ ...VALID, announce: { quips: Array.from({ length: 51 }, (_, i) => `q${i}`) } });
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/50/);
   });
+
+  it('rejects an explicit null channelId', () => {
+    write({ ...VALID, announce: { channelId: null } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/channelId/i);
+  });
+
+  it('rejects an explicit null quips', () => {
+    write({ ...VALID, announce: { quips: null } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/quips/i);
+  });
+
+  it('accepts a quip of exactly 2000 characters', () => {
+    write({ ...VALID, announce: { quips: ['x'.repeat(2000)] } });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.announce.quips[0]).toHaveLength(2000);
+  });
+
+  it('accepts exactly fifty quips', () => {
+    write({ ...VALID, announce: { quips: Array.from({ length: 50 }, (_, i) => `q${i}`) } });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.announce.quips).toHaveLength(50);
+  });
 });
