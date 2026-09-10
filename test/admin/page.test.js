@@ -120,3 +120,33 @@ describe('dashboard — announcements', () => {
     expect(html).toMatch(/createElement\('option'\)/);
   });
 });
+
+// Both pages paint a hardcoded light palette. `color-scheme: light dark`
+// told the browser to render form controls for the OS theme instead, so in
+// dark mode the UA picked white button text and the CSS below pinned the
+// button background to #fff -- white on white, on every button, select and
+// input. The rule that keeps it fixed is the second test: if you pin a
+// background, name the text colour that goes on it.
+describe('panel colours survive a dark-mode browser', () => {
+  const styleBlocks = (html) => html.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const rules = (css) => css.match(/[^{}]+\{[^{}]*\}/g) ?? [];
+
+  it.each([['login', renderLogin], ['dashboard', renderDashboard]])(
+    'the %s page commits to a light scheme rather than following the OS',
+    (_name, render) => {
+      const css = styleBlocks(render());
+      expect(css).toContain('color-scheme: light;');
+      expect(css).not.toContain('color-scheme: light dark');
+    },
+  );
+
+  it.each([['login', renderLogin], ['dashboard', renderDashboard]])(
+    'every %s rule that pins a background also names its text colour',
+    (_name, render) => {
+      const offenders = rules(styleBlocks(render()))
+        .filter((rule) => /background:\s*#fff\b/.test(rule) && !/(^|[;{\s])color:/.test(rule))
+        .map((rule) => rule.split('{')[0].trim());
+      expect(offenders).toEqual([]);
+    },
+  );
+});
