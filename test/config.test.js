@@ -140,3 +140,77 @@ describe('loadConfig — the file must contain a JSON object', () => {
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(file);
   });
 });
+
+describe('loadConfig — mode', () => {
+  it('defaults to repost when unset', () => {
+    write(VALID);
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).mode).toBe('repost');
+  });
+
+  it('reads the mode from the config file', () => {
+    write({ ...VALID, mode: 'suppress' });
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).mode).toBe('suppress');
+  });
+
+  it('lets an env var override the mode, case-insensitively', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'SUPPRESS' } });
+    expect(config.mode).toBe('suppress');
+  });
+
+  it.each(['edit', '', 'repost ', 'true'])('throws on the invalid mode %s', (value) => {
+    write({ ...VALID, mode: value });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/mode/i);
+  });
+
+  it('names the valid modes in the error', () => {
+    write({ ...VALID, mode: 'edit' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/repost.*suppress|suppress.*repost/);
+  });
+
+  it('does not mistake mode for an unknown platform', () => {
+    write({ ...VALID, mode: 'suppress' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).not.toThrow();
+  });
+
+  it('throws on invalid LINKFIX_MODE, naming the env var not the config file', () => {
+    write({ ...VALID, mode: 'repost' });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'banana' } }))
+      .toThrow(/LINKFIX_MODE/);
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'banana' } }))
+      .not.toThrow(new RegExp(file));
+  });
+
+  it('lets a valid LINKFIX_MODE override a valid file value', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'suppress' } });
+    expect(config.mode).toBe('suppress');
+  });
+});
+
+describe('loadConfig — modeSource', () => {
+  // LINKFIX_MODE silently overrides mode in config.json, so an operator
+  // troubleshooting a stuck mode needs the ready log to name which of the two
+  // actually won. modeSource is how loadConfig reports that.
+
+  it('reports "LINKFIX_MODE" when the env var set the mode', () => {
+    write({ ...VALID, mode: 'repost' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc', LINKFIX_MODE: 'suppress' } });
+    expect(config.mode).toBe('suppress');
+    expect(config.modeSource).toBe('LINKFIX_MODE');
+  });
+
+  it('reports "config.json" when the file set the mode', () => {
+    write({ ...VALID, mode: 'suppress' });
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.mode).toBe('suppress');
+    expect(config.modeSource).toBe('config.json');
+  });
+
+  it('reports "default" when neither the env var nor the file set the mode', () => {
+    write(VALID);
+    const config = loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } });
+    expect(config.mode).toBe('repost');
+    expect(config.modeSource).toBe('default');
+  });
+});

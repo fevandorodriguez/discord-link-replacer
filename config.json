@@ -1,4 +1,5 @@
 {
+  "mode": "repost",
   "twitter":   { "enabled": true, "domain": "fxtwitter.com" },
   "instagram": { "enabled": true, "domain": "oginstagram.com" },
   "tiktok":    { "enabled": true, "domain": "vxtiktok.com" },
