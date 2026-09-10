@@ -114,4 +114,30 @@ describe('announce', () => {
     await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => 1.9 });
     expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({ content: 'second' }));
   });
+
+  it('guards against NaN from pick, sends a valid quip', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => NaN });
+    const sentContent = channel.send.mock.calls[0][0].content;
+    expect(QUIPS).toContain(sentContent);
+  });
+
+  it('guards against undefined from pick, sends a valid quip', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => undefined });
+    const sentContent = channel.send.mock.calls[0][0].content;
+    expect(QUIPS).toContain(sentContent);
+  });
+
+  it('guards against non-numeric string from pick, sends a valid quip', async () => {
+    const channel = fakeChannel();
+    await announce('chan-1', QUIPS, { client: fakeClient({ channel }), logger: silentLogger, pick: () => 'x' });
+    const sentContent = channel.send.mock.calls[0][0].content;
+    expect(QUIPS).toContain(sentContent);
+  });
+
+  it('handles logger: null without throwing on a logging path', async () => {
+    expect(await announce('chan-1', QUIPS, { client: fakeClient({ channel: null }), logger: null }))
+      .toBe('channel-missing');
+  });
 });

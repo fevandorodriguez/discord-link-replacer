@@ -11,11 +11,11 @@ export async function announce(channelId, quips, { client, logger = {}, pick } =
   try {
     channel = await client.channels.fetch(channelId);
   } catch (error) {
-    logger.warn?.(`announce: could not find channel ${channelId}: ${error.message}`);
+    logger?.warn?.(`announce: could not find channel ${channelId}: ${error.message}`);
     return 'channel-missing';
   }
   if (!channel || !channel.isTextBased?.()) {
-    logger.warn?.(`announce: ${channelId} is not a channel this bot can post in.`);
+    logger?.warn?.(`announce: ${channelId} is not a channel this bot can post in.`);
     return 'channel-missing';
   }
 
@@ -25,18 +25,23 @@ export async function announce(channelId, quips, { client, logger = {}, pick } =
   try {
     canPost = channel.permissionsFor?.(client.user)?.has(PermissionFlagsBits.SendMessages);
   } catch (error) {
-    logger.warn?.(`announce: could not determine permissions for ${channelId}: ${error.message}`);
+    logger?.warn?.(`announce: could not determine permissions for ${channelId}: ${error.message}`);
     return 'not-postable';
   }
   if (!canPost) {
-    logger.warn?.(`announce: missing Send Messages in ${channelId}.`);
+    logger?.warn?.(`announce: missing Send Messages in ${channelId}.`);
     return 'not-postable';
   }
 
   const choose = pick ?? (() => Math.floor(Math.random() * quips.length));
   let index = choose();
-  // Clamp to valid range: handle negative, past-the-end, and fractional indices
-  index = Math.max(0, Math.min(Math.floor(index), quips.length - 1));
+  // Guard against NaN, undefined, non-numeric strings, and non-finite numbers.
+  // Treat any non-finite result as index 0 (first quip). Otherwise clamp to range.
+  if (!Number.isFinite(index)) {
+    index = 0;
+  } else {
+    index = Math.max(0, Math.min(Math.floor(index), quips.length - 1));
+  }
   const content = quips[index];
 
   try {
@@ -45,7 +50,7 @@ export async function announce(channelId, quips, { client, logger = {}, pick } =
     // ping the whole server on every restart.
     await channel.send({ content, allowedMentions: { parse: [] } });
   } catch (error) {
-    logger.error?.(`announce: send failed in ${channelId}: ${error.message}`);
+    logger?.error?.(`announce: send failed in ${channelId}: ${error.message}`);
     return 'failed';
   }
   return 'sent';
