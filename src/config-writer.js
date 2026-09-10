@@ -24,10 +24,19 @@ export function updateConfig(file, mutate, { rejectCode }) {
 
   mutate(raw);
 
-  // Write to a temp file beside the target, then rename: a crash mid-write
-  // must never leave a truncated config the bot cannot boot from. The temp
-  // file has to sit in the same directory, because rename is only atomic
-  // within a filesystem and the config directory is bind-mounted.
+  // Write to a temp file beside the target, then rename: a PROCESS crash
+  // mid-write leaves the half-written bytes in the temp file, so the config
+  // the bot boots from is either the old one or the new one, never a
+  // truncated one. The temp file has to sit in the same directory, because
+  // rename is only atomic within a filesystem and the config directory is
+  // bind-mounted.
+  //
+  // That is the whole guarantee. There is no fsync on the temp file or on the
+  // directory, so a host power loss or kernel panic can land the rename
+  // before the data and leave an empty or short config behind. Deliberate:
+  // this is a small file on a single box, the same pattern the mode store has
+  // always used, and the operator can retype a quip. Do not read the rename
+  // as durability.
   const tempFile = `${file}.tmp`;
   try {
     writeFileSync(tempFile, `${JSON.stringify(raw, null, 2)}\n`);
