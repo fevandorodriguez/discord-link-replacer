@@ -256,6 +256,23 @@ export function renderDashboard() {
       .replace(/'/g, '&#39;');
   }
 
+  // text() and a guarded parse, never res.json(): a refusal that isn't JSON
+  // makes res.json() throw, so the whole chain lands in the caller's catch
+  // and reports that the server could not be reached. It plainly could -- it
+  // answered. The likeliest such refusal is not even ours: Caddy sits in
+  // front of this and answers its own limits with an HTML error page.
+  function readResult(res) {
+    return res.text().then(function (text) {
+      var body = {};
+      try {
+        body = JSON.parse(text) || {};
+      } catch (e) {
+        body = {};
+      }
+      return { ok: res.ok, status: res.status, body: body };
+    });
+  }
+
   function renderModes(state) {
     var radios = ['repost', 'suppress'].map(function (mode) {
       var checked = state.mode === mode ? ' checked' : '';
@@ -315,13 +332,9 @@ export function renderDashboard() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode: mode }),
-    }).then(function (res) {
-      return res.json().then(function (body) {
-        return { ok: res.ok, body: body };
-      });
-    }).then(function (result) {
+    }).then(readResult).then(function (result) {
       if (!result.ok) {
-        statusEl.innerHTML = '<p class="mode-error">' + escapeHtml(result.body.error || 'Could not change mode.') + '</p>';
+        statusEl.innerHTML = '<p class="mode-error">' + escapeHtml(result.body.error || ('The server refused the change (HTTP ' + result.status + ').')) + '</p>';
       }
       refresh();
     }).catch(function () {
@@ -453,23 +466,7 @@ export function renderDashboard() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ channelId: channelEl.value, quips: quips }),
-    }).then(function (res) {
-      // text() and a guarded parse, not res.json(): a refusal that isn't JSON
-      // would make res.json() throw, and the whole thing would land in the
-      // catch below and claim the server could not be reached. It plainly
-      // could -- it answered. The one refusal that is not ours is the most
-      // likely: Caddy sits in front of this and answers its own request-size
-      // limit with an HTML error page.
-      return res.text().then(function (text) {
-        var body = {};
-        try {
-          body = JSON.parse(text) || {};
-        } catch (e) {
-          body = {};
-        }
-        return { ok: res.ok, status: res.status, body: body };
-      });
-    }).then(function (result) {
+    }).then(readResult).then(function (result) {
       if (!result.ok) {
         setAnnounceStatus(result.body.error || ('The server refused the save (HTTP ' + result.status + ').'), 'error');
         return;
@@ -495,13 +492,9 @@ export function renderDashboard() {
   function testAnnounce() {
     testAnnounceEl.disabled = true;
     setAnnounceStatus('Testing…');
-    fetch('/api/announce/test', { method: 'POST' }).then(function (res) {
-      return res.json().then(function (body) {
-        return { ok: res.ok, body: body };
-      });
-    }).then(function (result) {
+    fetch('/api/announce/test', { method: 'POST' }).then(readResult).then(function (result) {
       if (!result.ok) {
-        setAnnounceStatus(result.body.error || 'Could not post.', 'error');
+        setAnnounceStatus(result.body.error || ('The server refused the test (HTTP ' + result.status + ').'), 'error');
         return;
       }
       var outcome = result.body.result;

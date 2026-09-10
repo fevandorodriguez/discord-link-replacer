@@ -427,8 +427,8 @@ the channel works, and reports what happened in plain words — posted, the
 bot cannot see that channel, the bot cannot post there, and so on. Press
 it before the bot has finished logging in and it says so plainly rather
 than blaming the channel, but it still spends the cooldown below, so wait
-for the bot to be up first. It is
-rate-limited to **one test every 30 seconds, server-side and shared**:
+for the bot to be up first. It is rate-limited to **one test every 30
+seconds, server-side and shared**:
 that limit is not about you, it bounds what a leaked panel password can
 do with an endpoint that posts arbitrary text on demand. Note that Test
 uses what was last *saved*, not what is currently on screen — press Save
