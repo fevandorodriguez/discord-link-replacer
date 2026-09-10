@@ -449,12 +449,24 @@ export function renderDashboard() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ channelId: channelEl.value, quips: quips }),
     }).then(function (res) {
-      return res.json().then(function (body) {
-        return { ok: res.ok, body: body };
+      // text() and a guarded parse, not res.json(): a refusal that isn't JSON
+      // would make res.json() throw, and the whole thing would land in the
+      // catch below and claim the server could not be reached. It plainly
+      // could -- it answered. The one refusal that is not ours is the most
+      // likely: Caddy sits in front of this and answers its own request-size
+      // limit with an HTML error page.
+      return res.text().then(function (text) {
+        var body = {};
+        try {
+          body = JSON.parse(text) || {};
+        } catch (e) {
+          body = {};
+        }
+        return { ok: res.ok, status: res.status, body: body };
       });
     }).then(function (result) {
       if (!result.ok) {
-        setAnnounceStatus(result.body.error || 'Could not save.', 'error');
+        setAnnounceStatus(result.body.error || ('The server refused the save (HTTP ' + result.status + ').'), 'error');
         return;
       }
       // Redraw from what the server stored rather than from the local list:

@@ -86,6 +86,22 @@ describe('dashboard — announcements', () => {
     expect(html).toContain('setUnsaved(false)');
   });
 
+  it('reports what the server said about a refused save, not a network error', () => {
+    const html = renderDashboard();
+    // A save the server refuses (413 for an oversized list, 400 for a quip
+    // the validator rejects) now comes back as a real response. Reading it
+    // must not depend on the body parsing as JSON: in production Caddy sits
+    // in front and answers its own limits with an HTML error page, and
+    // res.json() throwing on that would drop the whole thing into the catch
+    // below and print "Could not reach the server." — which is a lie about a
+    // server that plainly answered.
+    expect(html).toMatch(/saveAnnounce[\s\S]*?res\.text\(\)/);
+    expect(html).toMatch(/saveAnnounce[\s\S]*?JSON\.parse/);
+    // An answer with no readable error still names the status code, so the
+    // operator has something to search for rather than a shrug.
+    expect(html).toContain('The server refused the save');
+  });
+
   it('builds quip and channel text as DOM text rather than interpolated markup', () => {
     const html = renderDashboard();
     // Quips and channel names are free text from /api/announce. They are
