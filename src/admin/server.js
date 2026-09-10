@@ -1,10 +1,27 @@
 import { createServer } from 'node:http';
+import { MAX_QUIPS, MAX_QUIP_LENGTH } from '../config.js';
 import { verifyPassword, signSession, verifySession, createRateLimiter } from './auth.js';
 import { renderLogin, renderDashboard } from './page.js';
 
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const COOKIE_FLAGS = 'HttpOnly; Secure; SameSite=Strict; Path=/';
 const BODY_LIMIT = 4096;
+// POST /api/announce is the one body that is legitimately large: it carries
+// the WHOLE quip list on every Save, and the caps say that list may hold
+// MAX_QUIPS entries of MAX_QUIP_LENGTH characters. Derived from those two
+// constants rather than hardcoded, so raising a cap cannot leave the limit
+// behind and turn legal input back into an unexplained failure.
+//
+//   MAX_QUIP_LENGTH counts UTF-16 code units, and JSON.stringify expands the
+//   worst of them (a control character, a lone surrogate) to a 6-byte \uXXXX
+//   escape, so one quip is at most 6 * MAX_QUIP_LENGTH bytes, plus 3 for its
+//   two quotes and the comma after it:
+//     50 * (6 * 2000 + 3)  = 600,150 bytes of quips
+//   plus BODY_LIMIT again as headroom for the envelope -- the key names, the
+//   brackets, a ~20-digit channel id, and any whitespace a hand-written
+//   client might indent with:
+//     600,150 + 4,096      = 604,246 bytes
+const ANNOUNCE_BODY_LIMIT = MAX_QUIPS * (6 * MAX_QUIP_LENGTH + 3) + BODY_LIMIT;
 // A short or empty secret is brute-forceable (or, for '', publicly known --
 // see createAdminServer below), which would let a forged cookie sail past
 // verifySession. 32 chars gives at least 128 bits from a hex secret, more
@@ -18,29 +35,48 @@ const TEST_ANNOUNCE_COOLDOWN_MS = 30000;
 // A fixed key, because this limit is per-endpoint rather than per-caller.
 const TEST_ANNOUNCE_KEY = 'announce-test';
 
-// Reads at most BODY_LIMIT bytes from the request body, then stops pulling
-// further data from the socket. A login form and a two-key JSON object are
-// tiny; anything larger is not a real client and is not worth buffering.
+// Reads at most `limit` bytes from the request body. Returns the decoded body
+// alongside `tooLarge`, so the caller can answer with a status code of its own
+// choosing rather than this function deciding for it.
 //
 // Buffers are concatenated and decoded once at the end (rather than the more
 // obvious `body += chunk`, which coerces each Buffer to a string as it
 // arrives via implicit toString('utf8') and can split a multi-byte UTF-8
-// character across a chunk boundary, corrupting it). Bytes over the limit
-// are never appended to `chunks`, so the accumulated buffer itself cannot
-// exceed BODY_LIMIT; `req.destroy()` stops the socket from being read
-// further once that happens.
-async function readBody(req, limit = BODY_LIMIT) {
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > limit) {
-      req.destroy();
-      break;
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf8');
+// character across a chunk boundary, corrupting it).
+//
+// Nothing here destroys the request, and that is the whole point. This used
+// to call req.destroy() on the over-limit chunk, which resets the socket and
+// the client sees a connection failure INSTEAD OF a response -- the same
+// class of bug as the reverted req.destroy() calls that swallowed 401/409/429
+// for clients mid-upload. `for await` cannot be used either: breaking out of
+// it calls the async iterator's return(), which destroys the stream and takes
+// the socket with it, so the bug would simply come back wearing a `break`.
+//
+// Instead the over-limit case resolves IMMEDIATELY (a second resolve from
+// 'end' is a no-op), so the caller's response is written while the client is
+// very likely still uploading -- which is exactly when it needs to arrive.
+// The 'data' listener stays attached so the rest of the body is read and
+// discarded, never buffered, letting the request end cleanly.
+function readBody(req, limit = BODY_LIMIT) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let tooLarge = false;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > limit) {
+        if (!tooLarge) {
+          tooLarge = true;
+          chunks.length = 0;
+          resolve({ body: '', tooLarge: true });
+        }
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve({ body: Buffer.concat(chunks).toString('utf8'), tooLarge }));
+    req.on('error', reject);
+  });
 }
 
 function cookieValue(header, name) {
@@ -87,7 +123,13 @@ export async function handleRequest(req, res, deps) {
       return html(res, 429, renderLogin('Too many attempts. Try again later.'));
     }
 
-    const params = new URLSearchParams(await readBody(req));
+    const { body, tooLarge } = await readBody(req);
+    // Not a password guess, so it does not spend an attempt against the
+    // limiter -- but it is still an answer rather than a reset socket. The
+    // login page, not JSON: this route is reached by a browser form post.
+    if (tooLarge) return html(res, 413, renderLogin('That sign-in request was too large to read.'));
+
+    const params = new URLSearchParams(body);
     if (!verifyPassword(params.get('password') ?? '', passwordHash)) {
       limiter.fail(ip);
       return html(res, 401, renderLogin('Incorrect password.'));
@@ -134,9 +176,14 @@ export async function handleRequest(req, res, deps) {
       });
     }
 
+    const { body, tooLarge } = await readBody(req);
+    // BODY_LIMIT stays tight here on purpose: this body is one key and one
+    // short string. Over it is not a real client -- but it still gets told so.
+    if (tooLarge) return json(res, 413, { error: 'That request was too large.' });
+
     let requested;
     try {
-      requested = JSON.parse(await readBody(req)).mode;
+      requested = JSON.parse(body).mode;
     } catch {
       return json(res, 400, { error: 'Malformed request.' });
     }
@@ -173,9 +220,19 @@ export async function handleRequest(req, res, deps) {
   }
 
   if (req.method === 'POST' && path === '/api/announce') {
+    const { body, tooLarge } = await readBody(req, ANNOUNCE_BODY_LIMIT);
+    // A 413 with the same { error } shape as every other refusal, because the
+    // panel prints it verbatim. Name the caps: an operator who hits this has
+    // no other way to discover a size limit exists.
+    if (tooLarge) {
+      return json(res, 413, {
+        error: `That quip list is too large to save. Keep it to at most ${MAX_QUIPS} quips of ${MAX_QUIP_LENGTH} characters each, then save again.`,
+      });
+    }
+
     let requested;
     try {
-      requested = JSON.parse(await readBody(req));
+      requested = JSON.parse(body);
     } catch {
       return json(res, 400, { error: 'Malformed request.' });
     }

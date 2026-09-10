@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -29,14 +30,17 @@ function fakeRes() {
   };
 }
 
+// A real Readable, not a hand-rolled async iterator: readBody consumes the
+// request with stream events (it must not break out of a for-await, which
+// would destroy the socket and lose the response), and a fake that only
+// implements Symbol.asyncIterator would test a code path production never
+// takes.
 function fakeReq({ method = 'GET', url = '/', cookie, body = '' } = {}) {
-  const req = {
-    method,
-    url,
-    headers: cookie ? { cookie } : {},
-    socket: { remoteAddress: '1.2.3.4' },
-    async *[Symbol.asyncIterator]() { yield Buffer.from(body); },
-  };
+  const req = Readable.from([Buffer.from(body)]);
+  req.method = method;
+  req.url = url;
+  req.headers = cookie ? { cookie } : {};
+  req.socket = { remoteAddress: '1.2.3.4' };
   return req;
 }
 
@@ -648,5 +652,115 @@ describe('announce routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ channelId: '123', quips: ['back'], channels: [] });
+  });
+});
+
+// The body limit was sized for a login form and a two-key JSON object, then
+// inherited by POST /api/announce, whose documented payload is 50 quips of
+// 2000 characters. Every legal save above ~4KB died as a socket reset with no
+// HTTP response at all, which the panel could only report as "Could not reach
+// the server." These go over real HTTP because that is the only place the
+// bug was visible: the handler "returned fine" in every unit test.
+describe('request body limits', () => {
+  const MAX_QUIPS = 50;
+  const MAX_QUIP_LENGTH = 2000;
+
+  function announceServer(overrides = {}) {
+    return createAdminServer({
+      ...deps,
+      announceStore: {
+        current: () => ({ channelId: '123', quips: [] }),
+        set: vi.fn(),
+      },
+      listChannels: () => [],
+      announceNow: vi.fn(async () => 'sent'),
+      ...overrides,
+    });
+  }
+
+  async function withServer(server, run) {
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      return await run(server.address().port);
+    } finally {
+      server.close();
+    }
+  }
+
+  it('accepts a quip list at the documented maximum size', async () => {
+    const set = vi.fn();
+    const quips = Array.from({ length: MAX_QUIPS }, () => 'q'.repeat(MAX_QUIP_LENGTH));
+    await withServer(announceServer({
+      announceStore: { current: () => ({ channelId: '123', quips }), set },
+    }), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ channelId: '123', quips }),
+      });
+      expect(response.status).toBe(200);
+      expect(set).toHaveBeenCalledWith({ channelId: '123', quips });
+    });
+  });
+
+  // 3 quips of 2000 characters -- well inside the documented cap, and one of
+  // the sizes that reproduced the reset.
+  it('accepts a modest quip list that the old 4KB limit already killed', async () => {
+    const quips = ['a'.repeat(2000), 'b'.repeat(2000), 'c'.repeat(2000)];
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ channelId: '123', quips }),
+      });
+      expect(response.status).toBe(200);
+    });
+  });
+
+  // The point of the fix is not a bigger number, it is that the client gets
+  // an answer. A body past the route's limit must come back as a real 413
+  // with a JSON error the panel can print -- not a destroyed socket.
+  it('answers an oversized quip list with a 413 the client can read', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/announce`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        // Comfortably past any limit derived from 50 x 2000.
+        body: JSON.stringify({ channelId: '123', quips: ['x'.repeat(2 * 1024 * 1024)] }),
+      });
+      expect(response.status).toBe(413);
+      const body = await response.json();
+      expect(typeof body.error).toBe('string');
+      // Useful to an operator: it must name the actual caps.
+      expect(body.error).toContain(String(MAX_QUIPS));
+      expect(body.error).toContain(String(MAX_QUIP_LENGTH));
+    });
+  });
+
+  // The other routes stay tight: /api/mode is a two-key object and has no
+  // business accepting hundreds of kilobytes. It must still answer, though.
+  it('keeps the small limit on /api/mode and answers 413 rather than resetting', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/mode`, {
+        method: 'POST',
+        headers: { cookie: `session=${signSession(Date.now() + 60000, SECRET)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'repost', padding: 'p'.repeat(8192) }),
+      });
+      expect(response.status).toBe(413);
+      expect(typeof (await response.json()).error).toBe('string');
+    });
+  });
+
+  // /login is a form post, so its oversized answer is the login page rather
+  // than JSON -- but it is still an answer.
+  it('answers an oversized login post with the login page', async () => {
+    await withServer(announceServer(), async (port) => {
+      const response = await fetch(`http://127.0.0.1:${port}/login`, {
+        method: 'POST',
+        body: `password=${'x'.repeat(8192)}`,
+      });
+      expect(response.status).toBe(413);
+      expect(await response.text()).toContain('type="password"');
+    });
   });
 });
