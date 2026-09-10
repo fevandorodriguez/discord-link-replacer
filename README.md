@@ -191,6 +191,50 @@ Suppress mode's limits:
   (which wears the author's name and avatar via the webhook), the
   suppress-mode reply is visibly the bot's own message.
 
+## Taking back an echo
+
+React with 🌠 on the bot's version of your own message, within an hour of it
+being posted, and the bot removes it.
+
+Only the person the echo was posted on behalf of can do this. Anyone else who
+reacts has their reaction quietly removed — it appears and then vanishes,
+which is the only feedback available. Reactions cannot carry a private reply:
+that needs an interaction (a slash command or a button), and a reaction is not
+one. The alternative would have been a public message in the channel or a DM,
+both worse for a mis-click.
+
+What "removed" means depends on the mode:
+
+| Mode | Effect |
+|---|---|
+| `repost` | The echo is deleted. The original was already deleted when it was posted, so the content is gone. Final, with no confirmation step. |
+| `suppress` | The original's embed is restored **first**, then the bot's reply is deleted — fully back to how it was. |
+
+That ordering is deliberate and matches the reply-before-suppress rule: if the
+restore succeeds and the delete then fails you get an untidy duplicate, whereas
+deleting first and failing to restore would leave the author with a stripped
+embed and no fixed link — worse off than if the bot had never touched it.
+
+The bot does not add the reaction itself. It would otherwise sit on every
+rewritten message forever for an action that is almost never used, and a
+non-author clicking a visible affordance and getting silence reads as broken.
+The cost is that nobody discovers the gesture without being told.
+
+**No new permission is needed.** This uses the `GuildMessageReactions` intent,
+which is not privileged, so there is no Developer Portal change — and removing
+a stray reaction uses Manage Messages, which the bot already has.
+
+Limits worth knowing:
+
+- **A restart forgets every pending undo.** Echoes posted before it can no
+  longer be taken back. Same trade as the activity log: nothing is persisted.
+- Once the hour is up, an expired echo is indistinguishable from any other
+  message, so a late reaction simply sits there.
+- The bot never touches this emoji on messages it did not post.
+- Exact emoji only — 🌠, not ⭐, ✨ or 🌟.
+- If the delete fails, the undo is spent: the entry is consumed when claimed,
+  so a double reaction cannot delete twice. The failure is logged.
+
 ## Running
 
 Locally:

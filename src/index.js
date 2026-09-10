@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { loadConfig } from './config.js';
 import { createWebhookCache } from './webhooks.js';
 import { handleMessage } from './bot.js';
@@ -6,6 +6,8 @@ import { createLogBuffer } from './logbuffer.js';
 import { createModeStore } from './admin/mode-store.js';
 import { createAdminServer } from './admin/server.js';
 import { checkMirrors } from './mirror-check.js';
+import { createEchoStore } from './echoes.js';
+import { handleUndoReaction, UNDO_EMOJI } from './undo.js';
 import { randomBytes } from 'node:crypto';
 
 const logBuffer = createLogBuffer();
@@ -62,8 +64,19 @@ const client = new Client({
     // Privileged: enable "Message Content Intent" in the Developer Portal or
     // every message arrives with empty content.
     GatewayIntentBits.MessageContent,
+    // Not privileged, so no Developer Portal change: lets the author take back
+    // an echo of their own message with a reaction.
+    GatewayIntentBits.GuildMessageReactions,
   ],
+  // An echo can be reacted to up to an hour after it was posted, by which time
+  // it is long out of the message cache. Without these the event arrives with
+  // nothing usable on it.
+  partials: [Partials.Message, Partials.Reaction, Partials.User],
 });
+
+// Which echo the bot posted on whose behalf, so its author — and only they —
+// can take it back. In memory: a restart forgets every pending undo.
+const echoes = createEchoStore();
 
 // The cache needs the bot's own user ID, which is known only after login.
 let webhooks = null;
@@ -120,7 +133,7 @@ client.on(Events.MessageCreate, async (message) => {
   if (!webhooks) return; // not logged in yet
   try {
     const outcome = await handleMessage(message, {
-      mode: modeStore.current(), platforms: config.platforms, webhooks, logger,
+      mode: modeStore.current(), platforms: config.platforms, webhooks, logger, echoes,
     });
     if (outcome === 'replaced' || outcome === 'suppressed' || outcome === 'fallback-reply') {
       // Channel name only — never the message or the link.
@@ -138,6 +151,23 @@ client.on(Events.MessageCreate, async (message) => {
   } catch (error) {
     // One bad message must never take the process down.
     logger.error(`unhandled error on message ${message.id}: ${error.stack}`);
+  }
+});
+
+// Reacting with the undo emoji on the bot's echo of your own message takes it
+// back. Every reaction in every visible channel arrives here, so the handler's
+// first job is almost always to decide to do nothing.
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  try {
+    const outcome = await handleUndoReaction(reaction, user, { echoes, logger });
+    if (outcome === 'undone') {
+      // Channel name only, exactly as with a delivery outcome.
+      const channel = reaction.message.channel;
+      logBuffer.record('info', `undone in #${channel?.name ?? channel?.id}`);
+    }
+  } catch (error) {
+    // A stray reaction must never take the process down either.
+    logger.error(`unhandled error on reaction ${UNDO_EMOJI}: ${error.stack}`);
   }
 });
 
