@@ -4,7 +4,45 @@ import { PLATFORMS, DEFAULT_DOMAINS } from './rules.js';
 export const MODES = ['repost', 'suppress'];
 const DEFAULT_MODE = 'repost';
 
+export const MAX_QUIP_LENGTH = 2000;
+export const MAX_QUIPS = 50;
+
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+
+// The restart quips and the channel they go to. Free text set through a
+// password-gated web page, so every rule here is enforced at startup rather
+// than trusted: a malformed value is fatal, exactly like a bad domain.
+function resolveAnnounce(raw, file) {
+  if (raw === undefined) return { channelId: '', quips: [] };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`Invalid "announce" in ${file}: expected an object.`);
+  }
+
+  const channelId = raw.channelId ?? '';
+  // Digits only: the panel always supplies a real id from its dropdown, so
+  // there is no channel name to resolve and nothing to guess at.
+  if (typeof channelId !== 'string' || (channelId !== '' && !/^\d+$/.test(channelId))) {
+    throw new Error(`Invalid "announce.channelId" in ${file}: expected a channel id of digits, or "" for none.`);
+  }
+
+  const quips = raw.quips ?? [];
+  if (!Array.isArray(quips)) {
+    throw new Error(`Invalid "announce.quips" in ${file}: expected an array of strings.`);
+  }
+  if (quips.length > MAX_QUIPS) {
+    throw new Error(`Too many entries in "announce.quips" in ${file}: at most ${MAX_QUIPS}.`);
+  }
+  for (const quip of quips) {
+    if (typeof quip !== 'string' || quip.trim().length === 0) {
+      throw new Error(`Invalid entry in "announce.quips" in ${file}: expected a non-empty string.`);
+    }
+    if (quip.length > MAX_QUIP_LENGTH) {
+      throw new Error(`An entry in "announce.quips" in ${file} is longer than ${MAX_QUIP_LENGTH} characters, which Discord will not accept.`);
+    }
+  }
+
+  return { channelId, quips };
+}
 
 export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   const token = env.DISCORD_TOKEN;
@@ -25,7 +63,7 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   for (const key of Object.keys(raw)) {
-    if (key === 'mode') continue;
+    if (key === 'mode' || key === 'announce') continue;
     if (!PLATFORMS.includes(key)) {
       throw new Error(`Unknown platform "${key}" in ${file}. Known platforms: ${PLATFORMS.join(', ')}.`);
     }
@@ -57,8 +95,9 @@ export function loadConfig({ file = 'config.json', env = process.env } = {}) {
   }
 
   const { mode, modeSource } = resolveMode(raw.mode, env, file);
+  const announce = resolveAnnounce(raw.announce, file);
 
-  return { token, mode, modeSource, platforms };
+  return { token, mode, modeSource, platforms, announce };
 }
 
 function envDomain(env, platform) {

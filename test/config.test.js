@@ -232,3 +232,53 @@ describe('loadConfig — mirror canary', () => {
     expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/canary/i);
   });
 });
+
+describe('loadConfig — announce', () => {
+  it('defaults to no channel and no quips', () => {
+    write(VALID);
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).announce)
+      .toEqual({ channelId: '', quips: [] });
+  });
+
+  it('reads a channel and quips from the file', () => {
+    write({ ...VALID, announce: { channelId: '123456789', quips: ['back'] } });
+    expect(loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } }).announce)
+      .toEqual({ channelId: '123456789', quips: ['back'] });
+  });
+
+  // loadConfig rejects any top-level key that is not a known platform. It
+  // already carries an exception for `mode`; without one for `announce` the
+  // bot refuses to start. This exact trap was hit when `mode` was added.
+  it('does not mistake announce for an unknown platform', () => {
+    write({ ...VALID, announce: { channelId: '', quips: [] } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).not.toThrow();
+  });
+
+  it.each([42, 'nope', [], null])('rejects a non-object announce (%s)', (bad) => {
+    write({ ...VALID, announce: bad });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/announce/i);
+  });
+
+  it.each(['abc', '12a', ' 123', 42, {}])('rejects the invalid channelId %s', (bad) => {
+    write({ ...VALID, announce: { channelId: bad } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/channelId/i);
+  });
+
+  it.each([['not an array', 'nope'], ['a non-string entry', [42]], ['an empty entry', ['']]])(
+    'rejects quips that are %s',
+    (_label, bad) => {
+      write({ ...VALID, announce: { quips: bad } });
+      expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/quips/i);
+    },
+  );
+
+  it('rejects a quip longer than Discord will accept', () => {
+    write({ ...VALID, announce: { quips: ['x'.repeat(2001)] } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/2000/);
+  });
+
+  it('rejects more than fifty quips', () => {
+    write({ ...VALID, announce: { quips: Array.from({ length: 51 }, (_, i) => `q${i}`) } });
+    expect(() => loadConfig({ file, env: { DISCORD_TOKEN: 'abc' } })).toThrow(/50/);
+  });
+});
